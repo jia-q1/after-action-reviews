@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>After Action Review Studio</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <header class="topbar">
+        <div class="brand">
+          <div class="brand-mark">UN</div>
+          <div>
+            <p class="brand-eyebrow">United Nations</p>
+            <h1>After Action Review Studio</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <button class="ghost-btn">Share draft</button>
+          <button class="primary-btn">New review</button>
+        </div>
+      </header>
+
+      <div class="main-grid">
+        <aside class="sidebar">
+          <section class="panel">
+            <div class="panel-title-row">
+              <h2>Review Library</h2>
+              <span class="pill">Approved</span>
+            </div>
+            <div class="filter-list">
+              <button class="filter-item active">All reviews</button>
+              <button class="filter-item">Humanitarian</button>
+              <button class="filter-item">Operations</button>
+              <button class="filter-item">Training</button>
+            </div>
+          </section>
+
+          <section class="panel">
+            <h3>Recent drafts</h3>
+            <ul class="doc-list">
+              <li class="doc-item active" data-title="Humanitarian Logistics Drill" data-summary="The team coordinated transport access with strong local partnerships, though customs delays reduced the speed of delivery to the final distribution point." data-event="Cross-border aid corridor deployment" data-date="14 May 2026" data-owner="Logistics Cell" data-body="The review highlighted clear communication between field teams and headquarters, a quick shift to alternate routes, and strong volunteer engagement. The main gap was the lack of pre-approved customs documentation, which delayed relief movement by nearly two hours during the first wave.">
+                <strong>Humanitarian Logistics Drill</strong>
+                <span>Approved · 14 May</span>
+              </li>
+              <li class="doc-item" data-title="Community Outreach Workshop" data-summary="The workshop generated strong participation and useful feedback, but the follow-up plan needs more structure to support communities after the event." data-event="Local resilience engagement" data-date="02 May 2026" data-owner="Partnerships Unit" data-body="Participants responded positively to the facilitation format and appreciated the practical demonstrations. The main recommendation is to create a post-event support package with follow-up calls, resource links, and a clearer referral pathway for participants who want additional assistance.">
+                <strong>Community Outreach Workshop</strong>
+                <span>In review · 02 May</span>
+              </li>
+              <li class="doc-item" data-title="Emergency Coordination Simulation" data-summary="The simulation improved interagency coordination and clarified the decision tree for rapid response, although roles were sometimes overlapping." data-event="Joint crisis simulation" data-date="21 Apr 2026" data-owner="Crisis Response Team" data-body="The scenario exercise helped teams test communication channels under time pressure. The biggest lesson was to pre-assign decision authority for information sharing and to streamline escalation steps to avoid duplication during the first thirty minutes of response.">
+                <strong>Emergency Coordination Simulation</strong>
+                <span>Draft · 21 Apr</span>
+              </li>
+            </ul>
+          </section>
+        </aside>
+
+        <main class="workspace">
+          <div class="workspace-header">
+            <div>
+              <p class="eyebrow">AI-assisted drafting workspace</p>
+              <h2 id="selected-title">Humanitarian Logistics Drill</h2>
+            </div>
+            <div class="status-badge">Draft ready for review</div>
+          </div>
+
+          <div class="workspace-grid">
+            <section class="preview-card">
+              <div class="card-header">
+                <h3>Selected artifact</h3>
+                <div class="chip-row">
+                  <span class="chip approved">Approved</span>
+                  <span class="chip">Template v2</span>
+                </div>
+              </div>
+
+              <div class="preview-body">
+                <p id="selected-summary">
+                  The team coordinated transport access with strong local partnerships, though customs delays reduced the speed of delivery to the final distribution point.
+                </p>
+
+                <div class="meta-grid">
+                  <div>
+                    <strong>Event</strong>
+                    <span id="selected-event">Cross-border aid corridor deployment</span>
+                  </div>
+                  <div>
+                    <strong>Date</strong>
+                    <span id="selected-date">14 May 2026</span>
+                  </div>
+                  <div>
+                    <strong>Owner</strong>
+                    <span id="selected-owner">Logistics Cell</span>
+                  </div>
+                </div>
+
+                <div class="artifact-block">
+                  <h4>Review narrative</h4>
+                  <p id="selected-body">
+                    The review highlighted clear communication between field teams and headquarters, a quick shift to alternate routes, and strong volunteer engagement. The main gap was the lack of pre-approved customs documentation, which delayed relief movement by nearly two hours during the first wave.
+                  </p>
+                </div>
+              </div>
+            </section>
+
+            <section class="composer-card">
+              <div class="card-header">
+                <h3>Draft composer</h3>
+                <span class="chip neutral">Notebook-style workspace</span>
+              </div>
+
+              <div class="composer-stack">
+                <label>
+                  Event details
+                  <textarea>Cross-border aid corridor deployment · 14 May 2026 · Coordinated with local partners and volunteer teams.</textarea>
+                </label>
+
+                <label>
+                  Prompt instructions
+                  <textarea class="small">Summarize the event, identify what worked well, flag challenges, and produce an editable after action review in a clear, professional style.</textarea>
+                </label>
+
+                <div class="composer-actions">
+                  <button class="primary-btn">Generate draft</button>
+                  <button class="ghost-btn">Save concept</button>
+                </div>
+
+                <div class="generated-block">
+                  <h4>Generated artifact</h4>
+                  <p>
+                    The draft will capture strengths, gaps, lessons learned, and recommended follow-up actions in a format that can be reviewed by a human editor before publication.
+                  </p>
+                </div>
+              </div>
+            </section>
+          </div>
+        </main>
+      </div>
+    </div>
+
+    <script src="script.js"></script>
+  </body>
+</html>

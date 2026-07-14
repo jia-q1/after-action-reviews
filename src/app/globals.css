@@ -1,0 +1,55 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f4f7fb;
+  --foreground: #10233f;
+
+  /* United Nations brand palette */
+  --un-blue-950: #061c33;
+  --un-blue-900: #0b2a4a;
+  --un-blue-800: #0f3a6e;
+  --un-blue-700: #0f4c8c;
+  --un-blue-600: #0072bc;
+  --un-blue-500: #1a8fd1;
+  --un-blue-400: #4ea6dc;
+  --un-blue-100: #dbeafc;
+  --un-blue-50: #eef5fd;
+  --un-gold-600: #ab8a3f;
+  --un-gold-500: #c7a252;
+  --un-gold-100: #f4ecd8;
+  --un-ink: #10233f;
+  --un-muted: #56728f;
+  --un-border: #d9e4f1;
+  --un-surface: #ffffff;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+
+  --color-un-blue-950: var(--un-blue-950);
+  --color-un-blue-900: var(--un-blue-900);
+  --color-un-blue-800: var(--un-blue-800);
+  --color-un-blue-700: var(--un-blue-700);
+  --color-un-blue-600: var(--un-blue-600);
+  --color-un-blue-500: var(--un-blue-500);
+  --color-un-blue-400: var(--un-blue-400);
+  --color-un-blue-100: var(--un-blue-100);
+  --color-un-blue-50: var(--un-blue-50);
+  --color-un-gold-600: var(--un-gold-600);
+  --color-un-gold-500: var(--un-gold-500);
+  --color-un-gold-100: var(--un-gold-100);
+  --color-un-ink: var(--un-ink);
+  --color-un-muted: var(--un-muted);
+  --color-un-border: var(--un-border);
+  --color-un-surface: var(--un-surface);
+
+  --font-sans: var(--font-noto-sans);
+  --font-serif: var(--font-noto-serif);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), Arial, Helvetica, sans-serif;
+}
