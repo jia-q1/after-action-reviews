@@ -2,7 +2,6 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import UnEmblem from "@/components/un-emblem";
 
 const navLinks = [
   { href: "/", label: "Review Library" },
@@ -28,11 +27,7 @@ export default function SiteHeader() {
       <div className="bg-un-surface border-b border-un-border shadow-sm">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between gap-3 sm:gap-6">
-            <Link
-              href="/"
-              className="flex min-w-0 items-center gap-2 sm:gap-3 shrink"
-            >
-              <UnEmblem className="h-9 w-9 sm:h-10 sm:w-10 shrink-0" />
+            <Link href="/" className="flex min-w-0 items-center shrink">
               <span className="flex min-w-0 flex-col leading-tight">
                 <span className="text-[0.65rem] sm:text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-un-blue-600">
                   United Nations
