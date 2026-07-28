@@ -34,14 +34,6 @@ export default function SiteFooter() {
           </p>
         </div>
       </div>
-
-      <div className="border-t border-un-blue-800">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-4 text-xs text-un-blue-400">
-          Prototype interface styled in the visual language of the United
-          Nations for internal design review. Not an official UN product or
-          publication.
-        </div>
-      </div>
     </footer>
   );
 }
