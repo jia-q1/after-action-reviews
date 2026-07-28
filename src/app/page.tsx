@@ -2,37 +2,51 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { categories, reviews, type ReviewStatus } from "@/data/reviews";
+import { crisisTypes, reviews, reviewYear } from "@/data/reviews";
 import ReviewCard from "@/components/review-card";
-
-const statuses: ReviewStatus[] = ["Approved", "In Review", "Draft"];
+import StatusBadge from "@/components/status-badge";
+import { formatPeriod } from "@/lib/format";
 
 export default function LibraryPage() {
   const [query, setQuery] = useState("");
-  const [activeCategory, setActiveCategory] = useState<string>("All");
-  const [activeStatus, setActiveStatus] = useState<string>("All");
+  const [activeCrisisType, setActiveCrisisType] = useState<string>("All");
 
-  const filtered = useMemo(() => {
+  const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     return reviews.filter((review) => {
       const matchesQuery =
         q.length === 0 ||
         review.title.toLowerCase().includes(q) ||
+        review.country.toLowerCase().includes(q) ||
         review.summary.toLowerCase().includes(q) ||
         review.tags.some((tag) => tag.toLowerCase().includes(q));
-      const matchesCategory =
-        activeCategory === "All" || review.category === activeCategory;
-      const matchesStatus =
-        activeStatus === "All" || review.status === activeStatus;
-      return matchesQuery && matchesCategory && matchesStatus;
+      const matchesCrisisType =
+        activeCrisisType === "All" || review.crisisType === activeCrisisType;
+      return matchesQuery && matchesCrisisType;
     });
-  }, [query, activeCategory, activeStatus]);
+  }, [query, activeCrisisType]);
+
+  const completed = matches
+    .filter((r) => r.status === "Completed")
+    .sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
+
+  const inProgress = matches
+    .filter((r) => r.status === "In Progress")
+    .sort((a, b) => b.periodStart.localeCompare(a.periodStart));
+
+  const completedByYear = useMemo(() => {
+    const groups = new Map<number, typeof completed>();
+    for (const review of completed) {
+      const y = reviewYear(review);
+      groups.set(y, [...(groups.get(y) ?? []), review]);
+    }
+    return [...groups.entries()].sort((a, b) => b[0] - a[0]);
+  }, [completed]);
 
   const counts = {
     total: reviews.length,
-    approved: reviews.filter((r) => r.status === "Approved").length,
-    inReview: reviews.filter((r) => r.status === "In Review").length,
-    draft: reviews.filter((r) => r.status === "Draft").length,
+    completed: reviews.filter((r) => r.status === "Completed").length,
+    inProgress: reviews.filter((r) => r.status === "In Progress").length,
   };
 
   return (
@@ -43,11 +57,10 @@ export default function LibraryPage() {
             After Action Review Programme
           </p>
           <h1 className="mt-3 font-serif text-3xl sm:text-4xl font-semibold max-w-2xl">
-            A shared library of lessons learned across every mission and
-            programme.
+            A shared library of lessons learned across every crisis response.
           </h1>
           <p className="mt-4 max-w-2xl text-un-blue-100 leading-relaxed">
-            Browse approved After Action Reviews, or start a new one with
+            Browse completed After Action Reviews, or start a new one with
             AI-assisted drafting, reviewed and approved by a human editor
             before it joins the library.
           </p>
@@ -69,7 +82,7 @@ export default function LibraryPage() {
                 type="text"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search reviews by title, theme, or keyword"
+                placeholder="Search by country, crisis, or keyword"
                 className="w-full rounded-full border-0 bg-white py-3 pl-11 pr-4 text-sm text-un-ink placeholder:text-un-muted shadow-lg focus:outline-none focus:ring-2 focus:ring-un-blue-400"
               />
             </div>
@@ -77,71 +90,126 @@ export default function LibraryPage() {
               href="/new"
               className="inline-flex items-center justify-center gap-2 rounded-full bg-un-gold-500 px-6 py-3 text-sm font-semibold text-un-blue-950 shadow-lg transition-colors hover:bg-un-gold-600"
             >
-              + Draft a new review
+              + Start a new AAR
             </Link>
           </div>
 
-          <dl className="mt-10 grid grid-cols-2 sm:grid-cols-4 gap-4 max-w-2xl">
+          <dl className="mt-10 grid grid-cols-3 gap-4 max-w-xl">
             <StatTile label="Total reviews" value={counts.total} />
-            <StatTile label="Approved" value={counts.approved} />
-            <StatTile label="In review" value={counts.inReview} />
-            <StatTile label="Drafts" value={counts.draft} />
+            <StatTile label="Completed" value={counts.completed} />
+            <StatTile label="In progress" value={counts.inProgress} />
           </dl>
         </div>
       </section>
 
-      <section className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10">
-        <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="flex flex-wrap gap-2">
+      <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-8">
+        <div className="flex flex-wrap gap-2">
+          <FilterChip
+            label="All crisis types"
+            active={activeCrisisType === "All"}
+            onClick={() => setActiveCrisisType("All")}
+          />
+          {crisisTypes.map((type) => (
             <FilterChip
-              label="All themes"
-              active={activeCategory === "All"}
-              onClick={() => setActiveCategory("All")}
+              key={type}
+              label={type}
+              active={activeCrisisType === type}
+              onClick={() => setActiveCrisisType(type)}
             />
-            {categories.map((category) => (
-              <FilterChip
-                key={category}
-                label={category}
-                active={activeCategory === category}
-                onClick={() => setActiveCategory(category)}
-              />
-            ))}
-          </div>
-
-          <div className="flex flex-wrap gap-2">
-            <FilterChip
-              label="All statuses"
-              active={activeStatus === "All"}
-              onClick={() => setActiveStatus("All")}
-              variant="status"
-            />
-            {statuses.map((status) => (
-              <FilterChip
-                key={status}
-                label={status}
-                active={activeStatus === status}
-                onClick={() => setActiveStatus(status)}
-                variant="status"
-              />
-            ))}
-          </div>
+          ))}
         </div>
 
-        <p className="mt-6 text-sm text-un-muted">
-          Showing {filtered.length} of {reviews.length} reviews
-        </p>
+        <nav className="mt-4 flex gap-4 text-sm">
+          <a
+            href="#completed"
+            className="font-medium text-un-blue-700 hover:text-un-blue-600"
+          >
+            Section 1 &middot; Completed ({completed.length})
+          </a>
+          <a
+            href="#in-progress"
+            className="font-medium text-un-blue-700 hover:text-un-blue-600"
+          >
+            Section 2 &middot; In progress ({inProgress.length})
+          </a>
+        </nav>
+      </div>
 
-        {filtered.length > 0 ? (
-          <div className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-            {filtered.map((review) => (
-              <ReviewCard key={review.slug} review={review} />
+      <section id="completed" className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10 scroll-mt-20">
+        <div className="flex items-baseline justify-between gap-3">
+          <h2 className="font-serif text-2xl font-semibold text-un-ink">
+            Section 1 &middot; Completed AARs
+          </h2>
+          <span className="text-sm text-un-muted">
+            Organized by year &middot; published to the library or linked
+            from SharePoint
+          </span>
+        </div>
+
+        {completedByYear.length > 0 ? (
+          <div className="mt-6 space-y-10">
+            {completedByYear.map(([year, yearReviews]) => (
+              <div key={year}>
+                <h3 className="font-serif text-lg font-semibold text-un-blue-800 border-b border-un-border pb-2">
+                  {year}
+                </h3>
+                <div className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                  {yearReviews.map((review) => (
+                    <ReviewCard key={review.slug} review={review} />
+                  ))}
+                </div>
+              </div>
             ))}
           </div>
         ) : (
-          <div className="mt-4 rounded-2xl border border-dashed border-un-border bg-un-surface py-16 text-center text-un-muted">
-            No reviews match your filters yet.
-          </div>
+          <EmptyState message="No completed reviews match your filters yet." />
         )}
+      </section>
+
+      <section id="in-progress" className="border-t border-un-border bg-un-blue-50/40">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10 scroll-mt-20">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="font-serif text-2xl font-semibold text-un-ink">
+              Section 2 &middot; In-Progress AARs
+            </h2>
+            <span className="text-sm text-un-muted">
+              Being drafted, reviewed, or validated
+            </span>
+          </div>
+
+          {inProgress.length > 0 ? (
+            <ul className="mt-6 divide-y divide-un-border overflow-hidden rounded-2xl border border-un-border bg-un-surface shadow-sm">
+              {inProgress.map((review) => (
+                <li key={review.slug}>
+                  <Link
+                    href={`/reviews/${review.slug}`}
+                    className="flex flex-col gap-2 px-5 py-4 transition-colors hover:bg-un-blue-50/60 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-un-blue-600">
+                          {review.crisisType}
+                        </span>
+                        <StatusBadge review={review} />
+                      </div>
+                      <p className="mt-1 font-serif text-base font-semibold text-un-ink">
+                        {review.title}
+                      </p>
+                      <p className="mt-0.5 truncate text-sm text-un-muted">
+                        {review.office}
+                      </p>
+                    </div>
+                    <span className="shrink-0 text-sm text-un-muted">
+                      {formatPeriod(review.periodStart, review.periodEnd)}
+                    </span>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <EmptyState message="No in-progress reviews match your filters right now." />
+          )}
+        </div>
       </section>
     </main>
   );
@@ -162,12 +230,10 @@ function FilterChip({
   label,
   active,
   onClick,
-  variant = "category",
 }: {
   label: string;
   active: boolean;
   onClick: () => void;
-  variant?: "category" | "status";
 }) {
   return (
     <button
@@ -176,13 +242,19 @@ function FilterChip({
       className={
         "rounded-full border px-3.5 py-1.5 text-sm font-medium transition-colors " +
         (active
-          ? variant === "category"
-            ? "border-un-blue-600 bg-un-blue-600 text-white"
-            : "border-un-gold-600 bg-un-gold-500 text-un-blue-950"
+          ? "border-un-blue-600 bg-un-blue-600 text-white"
           : "border-un-border bg-un-surface text-un-muted hover:border-un-blue-400 hover:text-un-blue-700")
       }
     >
       {label}
     </button>
+  );
+}
+
+function EmptyState({ message }: { message: string }) {
+  return (
+    <div className="mt-4 rounded-2xl border border-dashed border-un-border bg-un-surface py-16 text-center text-un-muted">
+      {message}
+    </div>
   );
 }

@@ -1,16 +1,12 @@
 import Link from "next/link";
 import type { Review } from "@/data/reviews";
 import StatusBadge from "@/components/status-badge";
-
-function formatDate(iso: string) {
-  return new Date(iso).toLocaleDateString("en-US", {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
+import { formatPeriod } from "@/lib/format";
 
 export default function ReviewCard({ review }: { review: Review }) {
+  const isCompleted = review.status === "Completed";
+  const externalLink = isCompleted ? review.sharepointUrl : undefined;
+
   return (
     <Link
       href={`/reviews/${review.slug}`}
@@ -18,9 +14,9 @@ export default function ReviewCard({ review }: { review: Review }) {
     >
       <div className="flex items-start justify-between gap-3">
         <span className="text-xs font-semibold uppercase tracking-wide text-un-blue-600">
-          {review.category}
+          {review.crisisType}
         </span>
-        <StatusBadge status={review.status} />
+        <StatusBadge review={review} />
       </div>
 
       <h3 className="mt-3 font-serif text-lg font-semibold leading-snug text-un-ink group-hover:text-un-blue-700">
@@ -32,9 +28,17 @@ export default function ReviewCard({ review }: { review: Review }) {
       </p>
 
       <div className="mt-4 flex items-center justify-between border-t border-un-border pt-3 text-xs text-un-muted">
-        <span>{review.office}</span>
-        <span>{formatDate(review.eventDate)}</span>
+        <span className="truncate">{review.office}</span>
+        <span className="shrink-0">
+          {formatPeriod(review.periodStart, review.periodEnd)}
+        </span>
       </div>
+
+      {externalLink && (
+        <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-un-blue-700">
+          Full report on SharePoint <span aria-hidden>&rarr;</span>
+        </span>
+      )}
     </Link>
   );
 }
