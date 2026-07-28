@@ -13,17 +13,6 @@ export default function SiteHeader() {
 
   return (
     <header className="sticky top-0 z-40">
-      <div className="bg-un-blue-950 text-un-blue-100 text-xs">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 h-8 flex items-center justify-between">
-          <span className="tracking-wide">
-            United Nations &middot; Department of Operational Support
-          </span>
-          <span className="hidden sm:inline text-un-blue-400">
-            After Action Review Programme
-          </span>
-        </div>
-      </div>
-
       <div className="bg-un-surface border-b border-un-border shadow-sm">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
           <div className="flex h-16 items-center justify-between gap-3 sm:gap-6">
