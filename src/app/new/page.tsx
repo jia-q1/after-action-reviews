@@ -18,7 +18,7 @@ import { formatPeriod } from "@/lib/format";
 
 const DEFAULT_PROMPT = `You are drafting an After Action Review for the UNDP Crisis Response Unit, following the official AAR Final Report template.
 
-Using the short facts and bullet points provided for each section, write clear, professional, neutral prose suitable for an institutional record. Expand each set of bullets into a coherent paragraph without inventing details that are not supported by the inputs. Keep the Executive Summary concise. Findings and recommendations should stay as direct, actionable statements.`;
+Read the attached source documents and any notes provided, and extract the relevant facts for each section. Write clear, professional, neutral prose suitable for an institutional record, and do not invent details that aren't supported by the sources. Where a section isn't covered yet, leave a clear note for the human reviewer instead of guessing. Findings and recommendations should stay as direct, actionable statements.`;
 
 type OverviewState = {
   country: string;
@@ -41,6 +41,8 @@ const EMPTY_OVERVIEW: OverviewState = {
   stage: "Drafting",
   sharepointUrl: "",
 };
+
+type DocumentSource = { id: string; name: string; size?: number };
 
 type Draft = {
   executiveSummary: string;
@@ -74,46 +76,107 @@ const EMPTY_DRAFT: Draft = {
   communicationAndResourceMobilization: "",
 };
 
-function toProse(bullets: string[], fallback: string) {
-  const clean = bullets.map((b) => b.trim()).filter(Boolean);
-  if (clean.length === 0) return fallback;
-  return clean
-    .map((b) => (/[.!?]$/.test(b) ? b : `${b}.`))
-    .map((b) => b.charAt(0).toUpperCase() + b.slice(1))
+// Which draft field a free-text note line is folded into, based on simple
+// keyword matching — a stand-in for real extraction from attached sources.
+const SECTION_KEYWORDS: { field: keyof Draft; keywords: string[]; topic: string }[] = [
+  {
+    field: "corporateResponseMechanisms",
+    keywords: ["crisis board", "corporate", "roster", "hq"],
+    topic: "UNDP's corporate response mechanisms",
+  },
+  {
+    field: "deploymentOfExperts",
+    keywords: ["deploy", "surge", "expert", "specialist"],
+    topic: "the deployment of experts",
+  },
+  {
+    field: "inCountryStructure",
+    keywords: ["structure", "capacity", "staff", "standing team"],
+    topic: "UNDP's in-country structure and response capacity",
+  },
+  {
+    field: "programmaticResponse",
+    keywords: ["programme", "program", "caseload", "recovery", "livelihood", "shelter"],
+    topic: "the programmatic response",
+  },
+  {
+    field: "operationalResponse",
+    keywords: ["procure", "logistic", "operation", "supply chain"],
+    topic: "the operational response",
+  },
+  {
+    field: "coordination",
+    keywords: ["coordinat", "cluster", "partner", "liaison"],
+    topic: "coordination with partners and authorities",
+  },
+  {
+    field: "communicationAndResourceMobilization",
+    keywords: ["appeal", "fund", "donor", "communicat", "resource mobiliz"],
+    topic: "communication and resource mobilization",
+  },
+  {
+    field: "objectives",
+    keywords: ["objective", "purpose", "aim of", "goal"],
+    topic: "the objectives of this review",
+  },
+  {
+    field: "scope",
+    keywords: ["scope", "out of scope", "period covers"],
+    topic: "the scope of this review",
+  },
+  {
+    field: "dataCollection",
+    keywords: ["interview", "survey", "focus group", "desk review", "validat"],
+    topic: "how data was collected and validated",
+  },
+  {
+    field: "countrySituation",
+    keywords: ["displaced", "affected", "situation", "context"],
+    topic: "the country situation and context",
+  },
+  {
+    field: "contextualFactors",
+    keywords: ["factor", "pre-existing", "background"],
+    topic: "contextual factors influencing the response",
+  },
+];
+
+function splitToPoints(text: string) {
+  return text
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
+
+function toProse(points: string[]) {
+  return points
+    .map((p) => (/[.!?]$/.test(p) ? p : `${p}.`))
+    .map((p) => p.charAt(0).toUpperCase() + p.slice(1))
     .join(" ");
+}
+
+function formatBytes(bytes?: number) {
+  if (!bytes) return "";
+  const units = ["B", "KB", "MB", "GB"];
+  let value = bytes;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i++;
+  }
+  return `${value < 10 && i > 0 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
 }
 
 export default function NewReviewPage() {
   const [overview, setOverview] = useState<OverviewState>(EMPTY_OVERVIEW);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
-  const [countrySituation, setCountrySituation] = useState<string[]>([]);
-  const [objectives, setObjectives] = useState<string[]>([]);
+  const [documents, setDocuments] = useState<DocumentSource[]>([]);
+  const [dragActive, setDragActive] = useState(false);
+  const [manualSourceName, setManualSourceName] = useState("");
 
-  const [scope, setScope] = useState<string[]>([]);
   const [methods, setMethods] = useState<string[]>([]);
-  const [validationNotes, setValidationNotes] = useState<string[]>([]);
-  const [documents, setDocuments] = useState<string[]>([]);
-
-  const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
-
-  const [contextualFactors, setContextualFactors] = useState<string[]>([]);
-  const [inCountryStructure, setInCountryStructure] = useState<string[]>([]);
-  const [corporateResponseMechanisms, setCorporateResponseMechanisms] =
-    useState<string[]>([]);
-  const [deploymentOfExperts, setDeploymentOfExperts] = useState<string[]>(
-    [],
-  );
-  const [programmaticResponse, setProgrammaticResponse] = useState<string[]>(
-    [],
-  );
-  const [operationalResponse, setOperationalResponse] = useState<string[]>(
-    [],
-  );
-  const [coordination, setCoordination] = useState<string[]>([]);
-  const [communication, setCommunication] = useState<string[]>([]);
-
-  const [findingsMatrix, setFindingsMatrix] = useState<FindingRow[]>([]);
-  const [interviewees, setInterviewees] = useState<Interviewee[]>([]);
+  const [notes, setNotes] = useState("");
 
   const [promptOpen, setPromptOpen] = useState(false);
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
@@ -122,6 +185,10 @@ export default function NewReviewPage() {
     "idle",
   );
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
+
+  const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
+  const [findingsMatrix, setFindingsMatrix] = useState<FindingRow[]>([]);
+  const [interviewees, setInterviewees] = useState<Interviewee[]>([]);
 
   const keyFindings = useMemo(
     () => findingsMatrix.map((r) => r.finding).filter(Boolean),
@@ -132,9 +199,61 @@ export default function NewReviewPage() {
     [findingsMatrix],
   );
 
+  function addFiles(fileList: FileList | null) {
+    if (!fileList || fileList.length === 0) return;
+    const added = Array.from(fileList).map((file) => ({
+      id: crypto.randomUUID(),
+      name: file.name,
+      size: file.size,
+    }));
+    setDocuments((prev) => [...prev, ...added]);
+  }
+
+  function addManualSource() {
+    if (!manualSourceName.trim()) return;
+    setDocuments((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), name: manualSourceName.trim() },
+    ]);
+    setManualSourceName("");
+  }
+
+  function removeDocument(id: string) {
+    setDocuments((prev) => prev.filter((d) => d.id !== id));
+  }
+
   function handleGenerate() {
     setStatus("generating");
     window.setTimeout(() => {
+      const points = splitToPoints(notes);
+      const buckets: Partial<Record<keyof Draft, string[]>> = {};
+
+      for (const point of points) {
+        const lower = point.toLowerCase();
+        const match = SECTION_KEYWORDS.find((s) =>
+          s.keywords.some((k) => lower.includes(k)),
+        );
+        const field = match?.field ?? "contextualFactors";
+        buckets[field] = [...(buckets[field] ?? []), point];
+      }
+
+      const docNames = documents.map((d) => d.name);
+      const hasDocs = docNames.length > 0;
+      const hasNotes = points.length > 0;
+
+      function sectionText(field: keyof Draft, topic: string) {
+        const pts = buckets[field];
+        if (pts && pts.length > 0) return toProse(pts);
+        if (hasDocs) {
+          const sourceLabel =
+            docNames.length === 1
+              ? docNames[0]
+              : `the attached sources (${docNames.join(", ")})`;
+          return `Review ${sourceLabel} and summarize ${topic} here.`;
+        }
+        return `Attach source documents or add notes on the left to generate ${topic}.`;
+      }
+
       const period = formatPeriod(overview.periodStart, overview.periodEnd);
       const countryLabel = overview.country.trim() || "the affected country";
       const crisisLabel = overview.crisisType.toLowerCase();
@@ -142,79 +261,78 @@ export default function NewReviewPage() {
       const summaryParts = [
         `This After Action Review examines UNDP's response to the ${crisisLabel} in ${countryLabel}${period ? ` (${period})` : ""}.`,
       ];
-      if (findingsMatrix.length > 0) {
+      if (hasDocs) {
         summaryParts.push(
-          `The review identifies ${findingsMatrix.length} finding${findingsMatrix.length === 1 ? "" : "s"} across the response areas below, each with an associated recommendation and suggested priority level.`,
+          `This draft was generated from ${documents.length} attached source${documents.length === 1 ? "" : "s"}${hasNotes ? " and the notes provided" : ""}.`,
         );
+      } else if (hasNotes) {
+        summaryParts.push("This draft was generated from the notes provided.");
       } else {
         summaryParts.push(
-          "Findings and recommendations will populate this section as the Annex 7 matrix below is completed.",
+          "Attach source documents on the left, or add notes, then regenerate to populate this draft.",
         );
       }
-      if (methods.length > 0) {
-        summaryParts.push(
-          `Evidence was gathered through ${methods.map((m) => m.toLowerCase()).join(", ")}.`,
-        );
-      }
+      summaryParts.push(
+        "Review each section below against the sources and edit as needed before this moves to validation.",
+      );
 
       setDraft({
         executiveSummary: summaryParts.join(" "),
-        countrySituation: toProse(
-          countrySituation,
-          "Add key facts about the country situation and context on the left to generate this section.",
+        countrySituation: sectionText(
+          "countrySituation",
+          "the country situation and context",
         ),
-        objectives: toProse(
-          objectives,
-          "Add the objectives of this After Action Review on the left to generate this section.",
+        objectives: sectionText(
+          "objectives",
+          "the objectives of this review",
         ),
-        scope: toProse(
-          scope,
-          "Add scope notes on the left to generate this section.",
-        ),
+        scope: sectionText("scope", "the scope of this review"),
         dataCollection: [
           methods.length > 0
-            ? `Data was collected through ${methods.map((m) => m.toLowerCase()).join(", ")}.`
+            ? `Evidence was gathered through ${methods.map((m) => m.toLowerCase()).join(", ")}.`
             : "",
-          toProse(validationNotes, ""),
+          sectionText(
+            "dataCollection",
+            "how data was collected and validated",
+          ),
         ]
           .filter(Boolean)
-          .join(" ") ||
-          "Select data collection methods and add validation notes on the left to generate this section.",
-        contextualFactors: toProse(
-          contextualFactors,
-          "Add contextual factors on the left to generate this section.",
+          .join(" "),
+        contextualFactors: sectionText(
+          "contextualFactors",
+          "contextual factors influencing the response",
         ),
-        inCountryStructure: toProse(
-          inCountryStructure,
-          "Add notes on in-country structure and response capacity on the left.",
+        inCountryStructure: sectionText(
+          "inCountryStructure",
+          "UNDP's in-country structure and response capacity",
         ),
-        corporateResponseMechanisms: toProse(
-          corporateResponseMechanisms,
-          "Add notes on corporate response mechanisms on the left.",
+        corporateResponseMechanisms: sectionText(
+          "corporateResponseMechanisms",
+          "UNDP's corporate response mechanisms",
         ),
-        deploymentOfExperts: toProse(
-          deploymentOfExperts,
-          "Add notes on deployment of experts on the left.",
+        deploymentOfExperts: sectionText(
+          "deploymentOfExperts",
+          "the deployment of experts",
         ),
-        programmaticResponse: toProse(
-          programmaticResponse,
-          "Add notes on programmatic response on the left.",
+        programmaticResponse: sectionText(
+          "programmaticResponse",
+          "the programmatic response",
         ),
-        operationalResponse: toProse(
-          operationalResponse,
-          "Add notes on operational response on the left.",
+        operationalResponse: sectionText(
+          "operationalResponse",
+          "the operational response",
         ),
-        coordination: toProse(
-          coordination,
-          "Add notes on coordination on the left.",
+        coordination: sectionText(
+          "coordination",
+          "coordination with partners and authorities",
         ),
-        communicationAndResourceMobilization: toProse(
-          communication,
-          "Add notes on communication and resource mobilization on the left.",
+        communicationAndResourceMobilization: sectionText(
+          "communicationAndResourceMobilization",
+          "communication and resource mobilization",
         ),
       });
       setStatus("ready");
-    }, 1100);
+    }, 1300);
   }
 
   return (
@@ -229,9 +347,9 @@ export default function NewReviewPage() {
               Draft a New After Action Review
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-un-muted">
-              Enter short facts and bullet points for each section below —
-              the AI drafts the full prose in the official AAR report format
-              on the right. Edit anything before it goes to review.
+              Attach source documents and add any notes, then generate a
+              draft in the official AAR report format. Review, edit, and
+              fill in the rest before it goes to review.
             </p>
           </div>
           <div className="flex gap-2">
@@ -251,10 +369,10 @@ export default function NewReviewPage() {
           </div>
         </div>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[400px_1fr]">
-          {/* Left column: structured inputs, grouped by report section */}
+        <div className="mt-8 grid gap-6 lg:grid-cols-[380px_1fr]">
+          {/* Left column: light-touch inputs, documents first */}
           <div className="space-y-5">
-            <Panel title="AAR overview">
+            <Panel title="AAR basics">
               <div className="space-y-3">
                 <Field label="Country / crisis name">
                   <input
@@ -285,24 +403,6 @@ export default function NewReviewPage() {
                       ))}
                     </select>
                   </Field>
-                  <Field label="Stage">
-                    <select
-                      value={overview.stage}
-                      onChange={(e) =>
-                        setOverview((o) => ({
-                          ...o,
-                          stage: e.target.value as ReviewStage,
-                        }))
-                      }
-                      className="input"
-                    >
-                      <option value="Drafting">Drafting</option>
-                      <option value="In Review">In Review</option>
-                      <option value="Validation">Validation</option>
-                    </select>
-                  </Field>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
                   <Field label="Period start">
                     <input
                       type="month"
@@ -316,226 +416,240 @@ export default function NewReviewPage() {
                       className="input"
                     />
                   </Field>
-                  <Field label="Period end">
-                    <input
-                      type="month"
-                      value={overview.periodEnd}
-                      onChange={(e) =>
-                        setOverview((o) => ({
-                          ...o,
-                          periodEnd: e.target.value,
-                        }))
-                      }
-                      className="input"
-                    />
-                  </Field>
                 </div>
-                <Field label="Responsible Country Office">
-                  <input
-                    value={overview.office}
-                    onChange={(e) =>
-                      setOverview((o) => ({ ...o, office: e.target.value }))
-                    }
-                    placeholder="e.g. Philippines Country Office"
-                    className="input"
-                  />
-                </Field>
-                <Field label="Lead author / consultant">
-                  <input
-                    value={overview.leadAuthor}
-                    onChange={(e) =>
-                      setOverview((o) => ({
-                        ...o,
-                        leadAuthor: e.target.value,
-                      }))
-                    }
-                    placeholder="e.g. Independent Consultant — name"
-                    className="input"
-                  />
-                </Field>
-                <Field label="SharePoint link (optional)">
-                  <input
-                    value={overview.sharepointUrl}
-                    onChange={(e) =>
-                      setOverview((o) => ({
-                        ...o,
-                        sharepointUrl: e.target.value,
-                      }))
-                    }
-                    placeholder="Link to the full report or supporting annexes"
-                    className="input"
-                  />
-                </Field>
-              </div>
-            </Panel>
 
-            <Panel title="1. Introduction">
-              <div className="space-y-4">
-                <BulletListField
-                  label="1.1 Country situation — key facts"
-                  hint="Short, factual points. The AI will turn these into a narrative paragraph."
-                  items={countrySituation}
-                  onChange={setCountrySituation}
-                  placeholder="e.g. Earthquake displaced 90,000 people across 3 provinces"
-                />
-                <BulletListField
-                  label="1.2 Objectives of this AAR"
-                  items={objectives}
-                  onChange={setObjectives}
-                  placeholder="e.g. Assess timeliness of surge deployment"
-                />
-              </div>
-            </Panel>
-
-            <Panel title="2. Methodology">
-              <div className="space-y-4">
-                <BulletListField
-                  label="2.1 Scope notes"
-                  hint="What's in and out of scope for this review."
-                  items={scope}
-                  onChange={setScope}
-                  placeholder="e.g. Covers emergency phase through early recovery handover"
-                />
-                <div>
-                  <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-un-muted">
-                    2.2–2.3 Data collection methods
-                  </span>
-                  <div className="flex flex-wrap gap-2">
-                    {dataCollectionMethods.map((method) => {
-                      const active = methods.includes(method);
-                      return (
-                        <button
-                          key={method}
-                          type="button"
-                          onClick={() =>
-                            setMethods((prev) =>
-                              active
-                                ? prev.filter((m) => m !== method)
-                                : [...prev, method],
-                            )
-                          }
-                          className={
-                            "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors " +
-                            (active
-                              ? "border-un-blue-600 bg-un-blue-600 text-white"
-                              : "border-un-border text-un-muted hover:border-un-blue-400 hover:text-un-blue-700")
-                          }
-                        >
-                          {method}
-                        </button>
-                      );
-                    })}
+                {advancedOpen ? (
+                  <div className="space-y-3 rounded-lg border border-un-border p-3">
+                    <Field label="Period end">
+                      <input
+                        type="month"
+                        value={overview.periodEnd}
+                        onChange={(e) =>
+                          setOverview((o) => ({
+                            ...o,
+                            periodEnd: e.target.value,
+                          }))
+                        }
+                        className="input"
+                      />
+                    </Field>
+                    <Field label="Stage">
+                      <select
+                        value={overview.stage}
+                        onChange={(e) =>
+                          setOverview((o) => ({
+                            ...o,
+                            stage: e.target.value as ReviewStage,
+                          }))
+                        }
+                        className="input"
+                      >
+                        <option value="Drafting">Drafting</option>
+                        <option value="In Review">In Review</option>
+                        <option value="Validation">Validation</option>
+                      </select>
+                    </Field>
+                    <Field label="Responsible Country Office">
+                      <input
+                        value={overview.office}
+                        onChange={(e) =>
+                          setOverview((o) => ({
+                            ...o,
+                            office: e.target.value,
+                          }))
+                        }
+                        placeholder="e.g. Philippines Country Office"
+                        className="input"
+                      />
+                    </Field>
+                    <Field label="Lead author / consultant">
+                      <input
+                        value={overview.leadAuthor}
+                        onChange={(e) =>
+                          setOverview((o) => ({
+                            ...o,
+                            leadAuthor: e.target.value,
+                          }))
+                        }
+                        placeholder="e.g. Independent Consultant — name"
+                        className="input"
+                      />
+                    </Field>
+                    <Field label="SharePoint link (optional)">
+                      <input
+                        value={overview.sharepointUrl}
+                        onChange={(e) =>
+                          setOverview((o) => ({
+                            ...o,
+                            sharepointUrl: e.target.value,
+                          }))
+                        }
+                        placeholder="Link to the full report or supporting annexes"
+                        className="input"
+                      />
+                    </Field>
+                    <button
+                      type="button"
+                      onClick={() => setAdvancedOpen(false)}
+                      className="text-xs font-semibold text-un-blue-700 hover:text-un-blue-600"
+                    >
+                      Hide details
+                    </button>
                   </div>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => setAdvancedOpen(true)}
+                    className="text-xs font-semibold text-un-blue-700 hover:text-un-blue-600"
+                  >
+                    + Add office, lead author, end date...
+                  </button>
+                )}
+              </div>
+            </Panel>
+
+            <Panel
+              title="Attach source documents"
+              subtitle={
+                documents.length > 0 ? `${documents.length} attached` : undefined
+              }
+            >
+              <p className="text-xs text-un-muted">
+                Situation reports, interview notes, survey results, Crisis
+                Board minutes — the AI drafts from what you attach here.
+              </p>
+
+              <label
+                onDragOver={(e) => {
+                  e.preventDefault();
+                  setDragActive(true);
+                }}
+                onDragLeave={() => setDragActive(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setDragActive(false);
+                  addFiles(e.dataTransfer.files);
+                }}
+                className={
+                  "mt-3 flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors " +
+                  (dragActive
+                    ? "border-un-blue-500 bg-un-blue-50"
+                    : "border-un-border hover:border-un-blue-400 hover:bg-un-blue-50/40")
+                }
+              >
+                <input
+                  type="file"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => addFiles(e.target.files)}
+                />
+                <span className="text-un-blue-600">
+                  <UploadIcon />
+                </span>
+                <span className="text-sm font-medium text-un-ink">
+                  Drag files here, or click to browse
+                </span>
+                <span className="text-xs text-un-muted">
+                  PDF, Word, Excel, or text files
+                </span>
+              </label>
+
+              {documents.length > 0 && (
+                <ul className="mt-3 space-y-2">
+                  {documents.map((doc) => (
+                    <li
+                      key={doc.id}
+                      className="flex items-center justify-between gap-2 rounded-lg border border-un-border bg-un-blue-50/60 px-3 py-2 text-sm"
+                    >
+                      <span className="flex min-w-0 items-center gap-2 text-un-ink">
+                        <DocIcon />
+                        <span className="truncate">{doc.name}</span>
+                        {doc.size ? (
+                          <span className="shrink-0 text-xs text-un-muted">
+                            {formatBytes(doc.size)}
+                          </span>
+                        ) : null}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => removeDocument(doc.id)}
+                        aria-label={`Remove ${doc.name}`}
+                        className="shrink-0 text-un-muted hover:text-un-blue-700"
+                      >
+                        &times;
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              <div className="mt-3 flex gap-2">
+                <input
+                  value={manualSourceName}
+                  onChange={(e) => setManualSourceName(e.target.value)}
+                  placeholder="Or add a source without a file, e.g. a verbal briefing"
+                  className="input"
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      e.preventDefault();
+                      addManualSource();
+                    }
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={addManualSource}
+                  className="shrink-0 rounded-lg border border-un-border px-3 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
+                >
+                  Add
+                </button>
+              </div>
+
+              <div className="mt-4">
+                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-un-muted">
+                  How was evidence gathered? (optional)
+                </span>
+                <div className="flex flex-wrap gap-2">
+                  {dataCollectionMethods.map((method) => {
+                    const active = methods.includes(method);
+                    return (
+                      <button
+                        key={method}
+                        type="button"
+                        onClick={() =>
+                          setMethods((prev) =>
+                            active
+                              ? prev.filter((m) => m !== method)
+                              : [...prev, method],
+                          )
+                        }
+                        className={
+                          "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors " +
+                          (active
+                            ? "border-un-blue-600 bg-un-blue-600 text-white"
+                            : "border-un-border text-un-muted hover:border-un-blue-400 hover:text-un-blue-700")
+                        }
+                      >
+                        {method}
+                      </button>
+                    );
+                  })}
                 </div>
-                <BulletListField
-                  label="2.4 Validation notes"
-                  items={validationNotes}
-                  onChange={setValidationNotes}
-                  placeholder="e.g. Findings validated in a workshop with Country Office SMT"
-                />
-                <BulletListField
-                  label="Supporting documents (Annexes 2, 5, 6)"
-                  hint="Desk review sources, survey/interview results, Crisis Board minutes."
-                  items={documents}
-                  onChange={setDocuments}
-                  placeholder="e.g. Crisis Board minutes, Jan–Apr 2026"
-                />
               </div>
             </Panel>
 
-            <Panel
-              title="3.2 Timeline of events"
-              subtitle={`${timeline.length} entries`}
-            >
-              <TimelineField entries={timeline} onChange={setTimeline} />
-            </Panel>
-
-            <Panel title="3. Analysis of the response">
+            <Panel title="Notes for the AI (optional)">
               <p className="text-xs text-un-muted">
-                Short notes per response area. Each expands into a paragraph
-                on the right.
+                Anything not captured in the attached documents. One point
+                per line works best.
               </p>
-              <div className="mt-3 space-y-2.5">
-                <AccordionField label="3.1 Contextual factors">
-                  <BulletListField
-                    items={contextualFactors}
-                    onChange={setContextualFactors}
-                    placeholder="Add a short point..."
-                  />
-                </AccordionField>
-                <AccordionField label="3.3 In-country structure & capacity">
-                  <BulletListField
-                    items={inCountryStructure}
-                    onChange={setInCountryStructure}
-                    placeholder="Add a short point..."
-                  />
-                </AccordionField>
-                <AccordionField label="3.4 Corporate response mechanisms">
-                  <BulletListField
-                    items={corporateResponseMechanisms}
-                    onChange={setCorporateResponseMechanisms}
-                    placeholder="Add a short point..."
-                  />
-                </AccordionField>
-                <AccordionField label="3.5 Deployment of experts">
-                  <BulletListField
-                    items={deploymentOfExperts}
-                    onChange={setDeploymentOfExperts}
-                    placeholder="Add a short point..."
-                  />
-                </AccordionField>
-                <AccordionField label="3.6 Programmatic response">
-                  <BulletListField
-                    items={programmaticResponse}
-                    onChange={setProgrammaticResponse}
-                    placeholder="Add a short point..."
-                  />
-                </AccordionField>
-                <AccordionField label="3.7 Operational response">
-                  <BulletListField
-                    items={operationalResponse}
-                    onChange={setOperationalResponse}
-                    placeholder="Add a short point..."
-                  />
-                </AccordionField>
-                <AccordionField label="3.8 Coordination">
-                  <BulletListField
-                    items={coordination}
-                    onChange={setCoordination}
-                    placeholder="Add a short point..."
-                  />
-                </AccordionField>
-                <AccordionField label="3.9 Communication & resource mobilization">
-                  <BulletListField
-                    items={communication}
-                    onChange={setCommunication}
-                    placeholder="Add a short point..."
-                  />
-                </AccordionField>
-              </div>
-            </Panel>
-
-            <Panel
-              title="Annex 7: Findings & recommendations matrix"
-              subtitle={`${findingsMatrix.length} rows`}
-            >
-              <p className="text-xs text-un-muted">
-                Each row becomes one item in Section 4.1 (finding) and 4.2
-                (recommendation), plus a row in the Annex 7 matrix.
-              </p>
-              <MatrixField
-                rows={findingsMatrix}
-                onChange={setFindingsMatrix}
-              />
-            </Panel>
-
-            <Panel
-              title="Annex 3: People consulted"
-              subtitle={`${interviewees.length} added`}
-            >
-              <IntervieweeField
-                people={interviewees}
-                onChange={setInterviewees}
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder={
+                  "e.g.\nShelter procurement took six weeks against a four-week target\nCoordination with the Office of Civil Defense was a clear strength"
+                }
+                className="input mt-2 min-h-[120px] resize-y"
               />
             </Panel>
 
@@ -588,12 +702,12 @@ export default function NewReviewPage() {
             </button>
           </div>
 
-          {/* Right column: generated report preview, editable */}
+          {/* Right column: the generated report, editable and interactive */}
           <div className="rounded-2xl border border-un-border bg-un-surface shadow-sm">
             <div className="flex items-center justify-between border-b border-un-border px-6 py-4">
               <div>
                 <h2 className="font-serif text-lg font-semibold text-un-ink">
-                  Generated report preview
+                  Generated report
                 </h2>
                 <p className="text-xs text-un-muted">
                   Editable draft &middot; not yet saved to the library
@@ -608,6 +722,19 @@ export default function NewReviewPage() {
 
               {status === "ready" && (
                 <div className="space-y-6">
+                  {documents.length > 0 && (
+                    <div className="flex flex-wrap gap-1.5">
+                      {documents.map((doc) => (
+                        <span
+                          key={doc.id}
+                          className="inline-flex items-center gap-1 rounded-full bg-un-blue-50 px-2.5 py-1 text-xs font-medium text-un-blue-700"
+                        >
+                          <DocIcon /> {doc.name}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+
                   <ArtifactField
                     label="Executive Summary"
                     value={draft.executiveSummary}
@@ -642,41 +769,39 @@ export default function NewReviewPage() {
                     }
                   />
 
-                  {timeline.length > 0 && (
-                    <div>
-                      <h3 className="font-serif text-base font-semibold text-un-ink border-b border-un-border pb-2">
+                  <div>
+                    <div className="flex items-center justify-between border-b border-un-border pb-2">
+                      <h3 className="font-serif text-base font-semibold text-un-ink">
                         3.2 Timeline of crisis events and response actions
                       </h3>
-                      <ol className="mt-3 space-y-2 text-sm">
-                        {timeline.map((entry, i) => (
-                          <li key={i} className="flex gap-3">
-                            <span className="shrink-0 font-mono text-xs text-un-blue-700">
-                              {entry.date || "—"}
-                            </span>
-                            <span className="text-un-ink/90">
-                              {entry.event}
-                            </span>
-                          </li>
-                        ))}
-                      </ol>
+                      <span className="text-xs text-un-muted">
+                        {timeline.length} entries
+                      </span>
                     </div>
-                  )}
+                    <div className="mt-3">
+                      <TimelineField
+                        entries={timeline}
+                        onChange={setTimeline}
+                      />
+                    </div>
+                  </div>
 
-                  <ArtifactField
+                  <AccordionArtifact
                     label="3.1 Contextual factors influencing the response"
                     value={draft.contextualFactors}
                     onChange={(v) =>
                       setDraft((d) => ({ ...d, contextualFactors: v }))
                     }
+                    defaultOpen
                   />
-                  <ArtifactField
+                  <AccordionArtifact
                     label="3.3 UNDP in-country structure and response capacity"
                     value={draft.inCountryStructure}
                     onChange={(v) =>
                       setDraft((d) => ({ ...d, inCountryStructure: v }))
                     }
                   />
-                  <ArtifactField
+                  <AccordionArtifact
                     label="3.4 UNDP corporate response mechanisms"
                     value={draft.corporateResponseMechanisms}
                     onChange={(v) =>
@@ -686,35 +811,35 @@ export default function NewReviewPage() {
                       }))
                     }
                   />
-                  <ArtifactField
+                  <AccordionArtifact
                     label="3.5 Deployment of experts"
                     value={draft.deploymentOfExperts}
                     onChange={(v) =>
                       setDraft((d) => ({ ...d, deploymentOfExperts: v }))
                     }
                   />
-                  <ArtifactField
+                  <AccordionArtifact
                     label="3.6 Programmatic response"
                     value={draft.programmaticResponse}
                     onChange={(v) =>
                       setDraft((d) => ({ ...d, programmaticResponse: v }))
                     }
                   />
-                  <ArtifactField
+                  <AccordionArtifact
                     label="3.7 Operational response"
                     value={draft.operationalResponse}
                     onChange={(v) =>
                       setDraft((d) => ({ ...d, operationalResponse: v }))
                     }
                   />
-                  <ArtifactField
+                  <AccordionArtifact
                     label="3.8 Coordination"
                     value={draft.coordination}
                     onChange={(v) =>
                       setDraft((d) => ({ ...d, coordination: v }))
                     }
                   />
-                  <ArtifactField
+                  <AccordionArtifact
                     label="3.9 Communication and resource mobilization"
                     value={draft.communicationAndResourceMobilization}
                     onChange={(v) =>
@@ -724,6 +849,23 @@ export default function NewReviewPage() {
                       }))
                     }
                   />
+
+                  <div>
+                    <div className="flex items-center justify-between border-b border-un-border pb-2">
+                      <h3 className="font-serif text-base font-semibold text-un-ink">
+                        Annex 7: Findings &amp; recommendations matrix
+                      </h3>
+                      <span className="text-xs text-un-muted">
+                        {findingsMatrix.length} rows
+                      </span>
+                    </div>
+                    <div className="mt-3">
+                      <MatrixField
+                        rows={findingsMatrix}
+                        onChange={setFindingsMatrix}
+                      />
+                    </div>
+                  </div>
 
                   <div>
                     <h3 className="font-serif text-base font-semibold text-un-ink border-b border-un-border pb-2">
@@ -740,8 +882,8 @@ export default function NewReviewPage() {
                       </ul>
                     ) : (
                       <p className="mt-2 text-sm text-un-muted">
-                        Add rows to the Annex 7 matrix on the left to
-                        populate this section.
+                        Add rows to the Annex 7 matrix above to populate
+                        this section.
                       </p>
                     )}
                   </div>
@@ -761,10 +903,27 @@ export default function NewReviewPage() {
                       </ul>
                     ) : (
                       <p className="mt-2 text-sm text-un-muted">
-                        Add rows to the Annex 7 matrix on the left to
-                        populate this section.
+                        Add rows to the Annex 7 matrix above to populate
+                        this section.
                       </p>
                     )}
+                  </div>
+
+                  <div>
+                    <div className="flex items-center justify-between border-b border-un-border pb-2">
+                      <h3 className="font-serif text-base font-semibold text-un-ink">
+                        Annex 3: People consulted
+                      </h3>
+                      <span className="text-xs text-un-muted">
+                        {interviewees.length} added
+                      </span>
+                    </div>
+                    <div className="mt-3">
+                      <IntervieweeField
+                        people={interviewees}
+                        onChange={setInterviewees}
+                      />
+                    </div>
                   </div>
                 </div>
               )}
@@ -818,29 +977,6 @@ function Panel({
   );
 }
 
-function AccordionField({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <details className="group rounded-lg border border-un-border open:bg-un-blue-50/30">
-      <summary className="cursor-pointer list-none px-3 py-2 text-xs font-semibold uppercase tracking-wide text-un-muted marker:content-none flex items-center justify-between gap-2">
-        {label}
-        <span
-          aria-hidden
-          className="text-un-muted transition-transform group-open:rotate-180"
-        >
-          &#9662;
-        </span>
-      </summary>
-      <div className="px-3 pb-3 pt-1">{children}</div>
-    </details>
-  );
-}
-
 function Field({
   label,
   children,
@@ -855,85 +991,6 @@ function Field({
       </span>
       {children}
     </label>
-  );
-}
-
-function BulletListField({
-  label,
-  hint,
-  items,
-  onChange,
-  placeholder,
-}: {
-  label?: string;
-  hint?: string;
-  items: string[];
-  onChange: (items: string[]) => void;
-  placeholder?: string;
-}) {
-  const [draftText, setDraftText] = useState("");
-
-  function add() {
-    if (!draftText.trim()) return;
-    onChange([...items, draftText.trim()]);
-    setDraftText("");
-  }
-
-  function remove(index: number) {
-    onChange(items.filter((_, i) => i !== index));
-  }
-
-  return (
-    <div>
-      {label && (
-        <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-un-muted">
-          {label}
-        </span>
-      )}
-      {hint && <p className="mb-2 text-xs text-un-muted">{hint}</p>}
-      {items.length > 0 && (
-        <ul className="mb-2 space-y-1.5">
-          {items.map((item, index) => (
-            <li
-              key={index}
-              className="flex items-start gap-2 rounded-lg border border-un-border bg-un-blue-50/60 px-3 py-1.5 text-sm"
-            >
-              <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-un-blue-600" />
-              <span className="flex-1 text-un-ink">{item}</span>
-              <button
-                type="button"
-                onClick={() => remove(index)}
-                aria-label="Remove"
-                className="text-un-muted hover:text-un-blue-700"
-              >
-                &times;
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="flex gap-2">
-        <input
-          value={draftText}
-          onChange={(e) => setDraftText(e.target.value)}
-          placeholder={placeholder ?? "Add a short point..."}
-          className="input"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add();
-            }
-          }}
-        />
-        <button
-          type="button"
-          onClick={add}
-          className="shrink-0 rounded-lg border border-un-border px-3 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
-        >
-          Add
-        </button>
-      </div>
-    </div>
   );
 }
 
@@ -960,8 +1017,8 @@ function TimelineField({
 
   return (
     <div>
-      {entries.length > 0 && (
-        <ul className="mb-2 space-y-1.5">
+      {entries.length > 0 ? (
+        <ol className="mb-2 space-y-1.5">
           {entries.map((entry, index) => (
             <li
               key={index}
@@ -981,7 +1038,11 @@ function TimelineField({
               </button>
             </li>
           ))}
-        </ul>
+        </ol>
+      ) : (
+        <p className="mb-2 text-sm text-un-muted">
+          No events added yet — add key dates from the sources below.
+        </p>
       )}
       <div className="flex gap-2">
         <input
@@ -1136,7 +1197,7 @@ function MatrixField({
   }
 
   return (
-    <div className="mt-3">
+    <div>
       {rows.length > 0 && (
         <ul className="mb-3 space-y-2">
           {rows.map((row, index) => (
@@ -1297,6 +1358,42 @@ function ArtifactField({
   );
 }
 
+function AccordionArtifact({
+  label,
+  value,
+  onChange,
+  defaultOpen = false,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  defaultOpen?: boolean;
+}) {
+  return (
+    <details
+      className="group rounded-lg border border-un-border open:bg-un-blue-50/20"
+      open={defaultOpen}
+    >
+      <summary className="cursor-pointer list-none px-3.5 py-2.5 text-sm font-semibold text-un-ink marker:content-none flex items-center justify-between gap-2">
+        {label}
+        <span
+          aria-hidden
+          className="text-un-muted transition-transform group-open:rotate-180"
+        >
+          &#9662;
+        </span>
+      </summary>
+      <div className="px-3.5 pb-3.5 pt-1">
+        <textarea
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="input min-h-[80px] resize-y leading-relaxed"
+        />
+      </div>
+    </details>
+  );
+}
+
 function StatusPill({ status }: { status: "idle" | "generating" | "ready" }) {
   const map = {
     idle: { text: "Waiting for input", cls: "bg-slate-100 text-slate-600" },
@@ -1324,9 +1421,9 @@ function EmptyState() {
         <SparkleIcon />
       </div>
       <p className="max-w-sm text-sm text-un-muted">
-        Fill in the overview and any of the sections on the left, then
-        generate a draft. You&apos;ll be able to edit every section before it
-        goes to review.
+        Attach source documents or add a few notes on the left, then
+        generate a draft. You&apos;ll be able to edit every section — and
+        add timeline events, findings, and people consulted — right here.
       </p>
     </div>
   );
@@ -1352,6 +1449,39 @@ function SparkleIcon() {
     <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
       <path d="M12 2l1.6 5.4L19 9l-5.4 1.6L12 16l-1.6-5.4L5 9l5.4-1.6L12 2Z" />
       <path d="M19 15l0.7 2.3L22 18l-2.3 0.7L19 21l-0.7-2.3L16 18l2.3-0.7L19 15Z" />
+    </svg>
+  );
+}
+
+function UploadIcon() {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      className="h-6 w-6"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M12 16V4" />
+      <path d="M7 9l5-5 5 5" />
+      <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
+    </svg>
+  );
+}
+
+function DocIcon() {
+  return (
+    <svg
+      viewBox="0 0 20 20"
+      className="h-4 w-4 shrink-0 text-un-blue-600"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.6"
+    >
+      <path d="M5 3h7l3 3v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
+      <path d="M12 3v3h3" />
     </svg>
   );
 }
