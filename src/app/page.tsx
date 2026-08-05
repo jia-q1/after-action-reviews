@@ -1,15 +1,56 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { crisisTypes, reviews, reviewYear } from "@/data/reviews";
+import {
+  crisisTypes,
+  reviews,
+  reviewYear,
+  statusStyles,
+  type ReviewStage,
+} from "@/data/reviews";
 import ReviewCard from "@/components/review-card";
-import StatusBadge from "@/components/status-badge";
 import { formatPeriod } from "@/lib/format";
+import { listSavedDrafts, type SavedAarDraft } from "@/lib/draft-storage";
+
+type InProgressItem = {
+  key: string;
+  href: string;
+  origin: "draft" | "sample";
+  crisisType: string;
+  title: string;
+  office: string;
+  period: string;
+  stage: ReviewStage;
+};
+
+function draftToItem(draft: SavedAarDraft): InProgressItem {
+  const { overview } = draft;
+  return {
+    key: draft.id,
+    href: `/new?draft=${draft.id}`,
+    origin: "draft",
+    crisisType: overview.crisisType,
+    title: overview.country
+      ? `${overview.country} — ${overview.crisisType}`
+      : "Untitled draft",
+    office: overview.office || "Office not set",
+    period: formatPeriod(overview.periodStart, overview.periodEnd),
+    stage: overview.stage,
+  };
+}
 
 export default function LibraryPage() {
   const [query, setQuery] = useState("");
   const [activeCrisisType, setActiveCrisisType] = useState<string>("All");
+  const [savedDrafts, setSavedDrafts] = useState<SavedAarDraft[]>([]);
+
+  // One-time read from localStorage (an external system) on mount.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    setSavedDrafts(listSavedDrafts());
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -30,9 +71,34 @@ export default function LibraryPage() {
     .filter((r) => r.status === "Completed")
     .sort((a, b) => b.periodEnd.localeCompare(a.periodEnd));
 
-  const inProgress = matches
+  const inProgressSamples = matches
     .filter((r) => r.status === "In Progress")
     .sort((a, b) => b.periodStart.localeCompare(a.periodStart));
+
+  const inProgress = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const draftItems = savedDrafts
+      .filter((d) => {
+        const matchesQuery =
+          q.length === 0 || d.overview.country.toLowerCase().includes(q);
+        const matchesCrisisType =
+          activeCrisisType === "All" ||
+          d.overview.crisisType === activeCrisisType;
+        return matchesQuery && matchesCrisisType;
+      })
+      .map(draftToItem);
+    const sampleItems: InProgressItem[] = inProgressSamples.map((review) => ({
+      key: review.slug,
+      href: `/reviews/${review.slug}`,
+      origin: "sample",
+      crisisType: review.crisisType,
+      title: review.title,
+      office: review.office,
+      period: formatPeriod(review.periodStart, review.periodEnd),
+      stage: review.stage ?? "Drafting",
+    }));
+    return [...draftItems, ...sampleItems];
+  }, [savedDrafts, inProgressSamples, query, activeCrisisType]);
 
   const completedByYear = useMemo(() => {
     const groups = new Map<number, typeof completed>();
@@ -44,9 +110,11 @@ export default function LibraryPage() {
   }, [completed]);
 
   const counts = {
-    total: reviews.length,
+    total: reviews.length + savedDrafts.length,
     completed: reviews.filter((r) => r.status === "Completed").length,
-    inProgress: reviews.filter((r) => r.status === "In Progress").length,
+    inProgress:
+      reviews.filter((r) => r.status === "In Progress").length +
+      savedDrafts.length,
   };
 
   return (
@@ -179,28 +247,34 @@ export default function LibraryPage() {
 
           {inProgress.length > 0 ? (
             <ul className="mt-6 divide-y divide-un-border overflow-hidden rounded-2xl border border-un-border bg-un-surface shadow-sm">
-              {inProgress.map((review) => (
-                <li key={review.slug}>
+              {inProgress.map((item) => (
+                <li key={item.key}>
                   <Link
-                    href={`/reviews/${review.slug}`}
+                    href={item.href}
                     className="flex flex-col gap-2 px-5 py-4 transition-colors hover:bg-un-blue-50/60 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
                   >
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-semibold uppercase tracking-wide text-un-blue-600">
-                          {review.crisisType}
+                          {item.crisisType}
                         </span>
-                        <StatusBadge review={review} />
+                        <StageBadge stage={item.stage} />
                       </div>
                       <p className="mt-1 font-serif text-base font-semibold text-un-ink">
-                        {review.title}
+                        {item.title}
                       </p>
                       <p className="mt-0.5 truncate text-sm text-un-muted">
-                        {review.office}
+                        {item.office}
+                        {item.origin === "draft" && (
+                          <span className="text-un-blue-600">
+                            {" "}
+                            &middot; saved on this device
+                          </span>
+                        )}
                       </p>
                     </div>
                     <span className="shrink-0 text-sm text-un-muted">
-                      {formatPeriod(review.periodStart, review.periodEnd)}
+                      {item.period}
                     </span>
                   </Link>
                 </li>
@@ -248,6 +322,18 @@ function FilterChip({
     >
       {label}
     </button>
+  );
+}
+
+function StageBadge({ stage }: { stage: ReviewStage }) {
+  const style = statusStyles[stage] ?? statusStyles.Drafting;
+  return (
+    <span
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-semibold ${style.badge}`}
+    >
+      <span className={`h-1.5 w-1.5 rounded-full ${style.dot}`} />
+      {stage}
+    </span>
   );
 }
 

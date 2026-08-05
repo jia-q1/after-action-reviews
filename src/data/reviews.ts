@@ -4,7 +4,11 @@
 // Annexes (interviewee list, findings/recommendations matrix).
 
 export type ReviewStatus = "Completed" | "In Progress";
-export type ReviewStage = "Drafting" | "In Review" | "Validation";
+export type ReviewStage =
+  | "Drafting"
+  | "Awaiting Survey Responses"
+  | "In Review"
+  | "Validation";
 export type PriorityLevel = "Very High" | "High" | "Medium" | "Low";
 
 export const crisisTypes = [
@@ -43,6 +47,56 @@ export const priorityLevels: PriorityLevel[] = [
   "High",
   "Medium",
   "Low",
+];
+
+// Placeholder survey templates — content (actual questions) is not defined
+// yet. Each stands in for a questionnaire that would be sent to a specific
+// audience and feeds specific response areas of the report once answered.
+export type SurveyTemplate = {
+  id: string;
+  name: string;
+  audience: string;
+  description: string;
+  informsSections: ResponseArea[];
+};
+
+export const surveyTemplates: SurveyTemplate[] = [
+  {
+    id: "response-team-debrief",
+    name: "Response Team Debrief",
+    audience: "Country Office staff directly involved in the response",
+    description:
+      "Placeholder — day-to-day account of what worked, what didn't, and where delivery hit friction.",
+    informsSections: ["Operational Response", "Programmatic Response", "Deployments"],
+  },
+  {
+    id: "leadership-reflection",
+    name: "Leadership & Management Reflection",
+    audience: "Resident Rep / Deputy Rep / senior management",
+    description:
+      "Placeholder — corporate mechanisms, resourcing decisions, and strategic coordination calls.",
+    informsSections: [
+      "Corporate Response Mechanisms",
+      "Country Office Response Structure and Capacities",
+      "Communication and Resource Mobilization",
+    ],
+  },
+  {
+    id: "partner-coordination",
+    name: "Partner & Coordination Feedback",
+    audience: "External partners, cluster leads, government counterparts",
+    description:
+      "Placeholder — how coordination and joint planning looked from outside UNDP.",
+    informsSections: ["Coordination", "Communication and Resource Mobilization"],
+  },
+  {
+    id: "field-frontline",
+    name: "Field / Frontline Staff Check-in",
+    audience: "Field-based and frontline delivery staff",
+    description:
+      "Placeholder — ground-level experience of programmatic delivery and community response.",
+    informsSections: ["Programmatic Response", "Operational Response"],
+  },
 ];
 
 export type TimelineEntry = { date: string; event: string };
@@ -718,6 +772,10 @@ export const statusStyles: Record<
   Drafting: {
     badge: "bg-slate-100 text-slate-600 ring-1 ring-slate-300",
     dot: "bg-slate-400",
+  },
+  "Awaiting Survey Responses": {
+    badge: "bg-orange-50 text-orange-700 ring-1 ring-orange-200",
+    dot: "bg-orange-500",
   },
   "In Review": {
     badge: "bg-un-gold-100 text-un-gold-600 ring-1 ring-un-gold-500/30",

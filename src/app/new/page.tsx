@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   crisisTypes,
   dataCollectionMethods,
   priorityLevels,
   responseAreas,
+  surveyTemplates,
   type CrisisType,
   type FindingRow,
   type Interviewee,
@@ -15,21 +17,27 @@ import {
   type TimelineEntry,
 } from "@/data/reviews";
 import { formatPeriod } from "@/lib/format";
+import {
+  getSavedDraft,
+  upsertSavedDraft,
+  type AarOverview as OverviewState,
+  type DocumentSource,
+  type InviteStatus,
+  type ReportDraft as Draft,
+  type SavedAarDraft,
+  type SurveyInvite,
+} from "@/lib/draft-storage";
+
+const STEPS = [
+  { id: 1, label: "AAR Basics" },
+  { id: 2, label: "Send Surveys" },
+  { id: 3, label: "Sources & Draft" },
+] as const;
+type Step = (typeof STEPS)[number]["id"];
 
 const DEFAULT_PROMPT = `You are drafting an After Action Review for the UNDP Crisis Response Unit, following the official AAR Final Report template.
 
 Read the attached source documents and any notes provided, and extract the relevant facts for each section. Write clear, professional, neutral prose suitable for an institutional record, and do not invent details that aren't supported by the sources. Where a section isn't covered yet, leave a clear note for the human reviewer instead of guessing. Findings and recommendations should stay as direct, actionable statements.`;
-
-type OverviewState = {
-  country: string;
-  crisisType: CrisisType;
-  periodStart: string;
-  periodEnd: string;
-  office: string;
-  leadAuthor: string;
-  stage: ReviewStage;
-  sharepointUrl: string;
-};
 
 const EMPTY_OVERVIEW: OverviewState = {
   country: "",
@@ -42,22 +50,12 @@ const EMPTY_OVERVIEW: OverviewState = {
   sharepointUrl: "",
 };
 
-type DocumentSource = { id: string; name: string; size?: number };
-
-type Draft = {
-  executiveSummary: string;
-  countrySituation: string;
-  objectives: string;
-  scope: string;
-  dataCollection: string;
-  contextualFactors: string;
-  inCountryStructure: string;
-  corporateResponseMechanisms: string;
-  deploymentOfExperts: string;
-  programmaticResponse: string;
-  operationalResponse: string;
-  coordination: string;
-  communicationAndResourceMobilization: string;
+const EMPTY_INVITE_FORM = {
+  name: "",
+  role: "",
+  unit: "",
+  email: "",
+  surveyId: surveyTemplates[0].id,
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -168,8 +166,25 @@ function formatBytes(bytes?: number) {
 }
 
 export default function NewReviewPage() {
+  return (
+    <Suspense fallback={<main className="flex-1 bg-background" />}>
+      <NewReviewWorkspace />
+    </Suspense>
+  );
+}
+
+function NewReviewWorkspace() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const [draftId, setDraftId] = useState("");
+  const [step, setStep] = useState<Step>(1);
+
   const [overview, setOverview] = useState<OverviewState>(EMPTY_OVERVIEW);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+
+  const [invites, setInvites] = useState<SurveyInvite[]>([]);
+  const [inviteForm, setInviteForm] = useState(EMPTY_INVITE_FORM);
 
   const [documents, setDocuments] = useState<DocumentSource[]>([]);
   const [dragActive, setDragActive] = useState(false);
@@ -189,6 +204,35 @@ export default function NewReviewPage() {
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [findingsMatrix, setFindingsMatrix] = useState<FindingRow[]>([]);
   const [interviewees, setInterviewees] = useState<Interviewee[]>([]);
+
+  // One-time hydration from an external source (the URL and localStorage)
+  // on mount — not state derived from props/state, so setState here is the
+  // sanctioned pattern rather than the anti-pattern this rule targets.
+  /* eslint-disable react-hooks/set-state-in-effect */
+  useEffect(() => {
+    const paramId = searchParams.get("draft");
+    if (paramId) {
+      const saved = getSavedDraft(paramId);
+      if (saved) {
+        setDraftId(saved.id);
+        setOverview(saved.overview);
+        setInvites(saved.invites);
+        setDocuments(saved.documents);
+        setMethods(saved.methods);
+        setNotes(saved.notes);
+        setDraft(saved.reportDraft);
+        setTimeline(saved.timeline);
+        setFindingsMatrix(saved.findingsMatrix);
+        setInterviewees(saved.interviewees);
+        setStep(saved.step);
+        if (saved.reportDraft.executiveSummary) setStatus("ready");
+        return;
+      }
+    }
+    setDraftId(crypto.randomUUID());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const keyFindings = useMemo(
     () => findingsMatrix.map((r) => r.finding).filter(Boolean),
@@ -220,6 +264,129 @@ export default function NewReviewPage() {
 
   function removeDocument(id: string) {
     setDocuments((prev) => prev.filter((d) => d.id !== id));
+  }
+
+  function addInvite() {
+    if (!inviteForm.name.trim() || !inviteForm.email.trim()) return;
+    setInvites((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), status: "Draft", ...inviteForm },
+    ]);
+    setInviteForm(EMPTY_INVITE_FORM);
+  }
+
+  function removeInvite(id: string) {
+    setInvites((prev) => prev.filter((i) => i.id !== id));
+  }
+
+  function sendInvite(id: string) {
+    setInvites((prev) =>
+      prev.map((invite) =>
+        invite.id === id
+          ? {
+              ...invite,
+              status: "Sent",
+              sentAt: new Date().toLocaleString("en-US", {
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              }),
+            }
+          : invite,
+      ),
+    );
+  }
+
+  function sendAllPending() {
+    setInvites((prev) =>
+      prev.map((invite) =>
+        invite.status === "Draft"
+          ? {
+              ...invite,
+              status: "Sent",
+              sentAt: new Date().toLocaleString("en-US", {
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              }),
+            }
+          : invite,
+      ),
+    );
+  }
+
+  function markResponded(id: string) {
+    setInvites((prev) =>
+      prev.map((invite) =>
+        invite.id === id
+          ? {
+              ...invite,
+              status: "Responded" as InviteStatus,
+              respondedAt: new Date().toLocaleString("en-US", {
+                month: "short",
+                day: "numeric",
+                hour: "numeric",
+                minute: "2-digit",
+              }),
+            }
+          : invite,
+      ),
+    );
+  }
+
+  function addInvitesToPeopleConsulted() {
+    setInterviewees((prev) => {
+      const existingNames = new Set(prev.map((p) => p.name.toLowerCase()));
+      const additions = invites
+        .filter((invite) => !existingNames.has(invite.name.toLowerCase()))
+        .map((invite) => ({
+          name: invite.name,
+          title: invite.role,
+          agency: invite.unit,
+        }));
+      return [...prev, ...additions];
+    });
+  }
+
+  function buildSavedDraft(opts?: {
+    overview?: OverviewState;
+    step?: Step;
+  }): SavedAarDraft {
+    return {
+      id: draftId,
+      step: opts?.step ?? step,
+      updatedAt: new Date().toISOString(),
+      overview: opts?.overview ?? overview,
+      invites,
+      documents,
+      methods,
+      notes,
+      reportDraft: draft,
+      timeline,
+      findingsMatrix,
+      interviewees,
+    };
+  }
+
+  function handleSaveAsDraft() {
+    if (!draftId) return;
+    upsertSavedDraft(buildSavedDraft());
+    router.push("/");
+  }
+
+  function handleSaveAndWaitForResponses() {
+    if (!draftId) return;
+    const updatedOverview: OverviewState = {
+      ...overview,
+      stage: "Awaiting Survey Responses",
+    };
+    setOverview(updatedOverview);
+    upsertSavedDraft(
+      buildSavedDraft({ overview: updatedOverview, step: 2 }),
+    );
+    router.push("/");
   }
 
   function handleGenerate() {
@@ -347,14 +514,15 @@ export default function NewReviewPage() {
               Draft a New After Action Review
             </h1>
             <p className="mt-1 max-w-2xl text-sm text-un-muted">
-              Attach source documents and add any notes, then generate a
-              draft in the official AAR report format. Review, edit, and
-              fill in the rest before it goes to review.
+              Set the basics, send surveys to contributors, then attach
+              sources and generate a draft in the official AAR report
+              format.
             </p>
           </div>
           <div className="flex gap-2">
             <button
               type="button"
+              onClick={handleSaveAsDraft}
               className="rounded-full border border-un-border px-4 py-2 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
             >
               Save as draft
@@ -369,9 +537,10 @@ export default function NewReviewPage() {
           </div>
         </div>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-[380px_1fr]">
-          {/* Left column: light-touch inputs, documents first */}
-          <div className="space-y-5">
+        <StepIndicator current={step} onSelect={setStep} />
+
+        {step === 1 && (
+          <div className="mx-auto mt-8 max-w-xl">
             <Panel title="AAR basics">
               <div className="space-y-3">
                 <Field label="Country / crisis name">
@@ -507,6 +676,281 @@ export default function NewReviewPage() {
                 )}
               </div>
             </Panel>
+
+            <div className="mt-6 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setStep(2)}
+                className="rounded-full bg-un-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-un-blue-700"
+              >
+                Continue to Send Surveys &rarr;
+              </button>
+            </div>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="mx-auto mt-8 max-w-6xl space-y-5">
+          {overview.stage === "Awaiting Survey Responses" && (
+            <div className="flex items-center justify-between gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+              <span>
+                <strong>Waiting for survey responses.</strong>{" "}
+                {invites.filter((i) => i.status === "Responded").length} of{" "}
+                {invites.length} contributors have responded so far. Mark
+                responses in as they come in, then continue when
+                you&apos;re ready.
+              </span>
+            </div>
+          )}
+          <div className="grid gap-5 lg:grid-cols-[360px_1fr] lg:items-start">
+            <Panel title="Available surveys">
+              <p className="text-xs text-un-muted">
+                Question content isn&apos;t written yet — these are
+                placeholder templates so you can start inviting people and
+                fill in the real questions later.
+              </p>
+              <div className="mt-3 grid gap-3">
+                {surveyTemplates.map((survey) => (
+                  <div
+                    key={survey.id}
+                    className="rounded-xl border border-un-border bg-un-blue-50/40 p-3.5"
+                  >
+                    <p className="text-sm font-semibold text-un-ink">
+                      {survey.name}
+                    </p>
+                    <p className="mt-0.5 text-xs font-medium text-un-blue-600">
+                      {survey.audience}
+                    </p>
+                    <p className="mt-1.5 text-xs italic text-un-muted">
+                      {survey.description}
+                    </p>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {survey.informsSections.map((area) => (
+                        <span
+                          key={area}
+                          className="rounded-full bg-white px-2 py-0.5 text-[0.65rem] font-medium text-un-blue-700 ring-1 ring-un-blue-200"
+                        >
+                          {area}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </Panel>
+
+            <Panel
+              title="Invite contributors"
+              subtitle={invites.length > 0 ? `${invites.length} added` : undefined}
+            >
+              <p className="text-xs text-un-muted">
+                Add each person, pick which survey fits them, and send an
+                invite — like requesting a recommendation letter. Sending
+                isn&apos;t connected to a real email service yet, so this
+                simulates the invite going out.
+              </p>
+
+              <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                <Field label="Name">
+                  <input
+                    value={inviteForm.name}
+                    onChange={(e) =>
+                      setInviteForm((f) => ({ ...f, name: e.target.value }))
+                    }
+                    placeholder="e.g. Maria Santos"
+                    className="input"
+                  />
+                </Field>
+                <Field label="Role / title">
+                  <input
+                    value={inviteForm.role}
+                    onChange={(e) =>
+                      setInviteForm((f) => ({ ...f, role: e.target.value }))
+                    }
+                    placeholder="e.g. Crisis Coordinator"
+                    className="input"
+                  />
+                </Field>
+                <Field label="Unit / office">
+                  <input
+                    value={inviteForm.unit}
+                    onChange={(e) =>
+                      setInviteForm((f) => ({ ...f, unit: e.target.value }))
+                    }
+                    placeholder="e.g. Philippines Country Office"
+                    className="input"
+                  />
+                </Field>
+                <Field label="Email">
+                  <input
+                    type="email"
+                    value={inviteForm.email}
+                    onChange={(e) =>
+                      setInviteForm((f) => ({ ...f, email: e.target.value }))
+                    }
+                    placeholder="name@undp.org"
+                    className="input"
+                  />
+                </Field>
+                <div className="sm:col-span-2">
+                  <Field label="Survey">
+                    <select
+                      value={inviteForm.surveyId}
+                      onChange={(e) =>
+                        setInviteForm((f) => ({
+                          ...f,
+                          surveyId: e.target.value,
+                        }))
+                      }
+                      className="input"
+                    >
+                      {surveyTemplates.map((survey) => (
+                        <option key={survey.id} value={survey.id}>
+                          {survey.name}
+                        </option>
+                      ))}
+                    </select>
+                  </Field>
+                </div>
+              </div>
+
+              <button
+                type="button"
+                onClick={addInvite}
+                className="mt-3 w-full rounded-lg border border-dashed border-un-border px-3 py-2 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
+              >
+                + Add to invite list
+              </button>
+
+              {invites.length > 0 && (
+                <div className="mt-5">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-semibold uppercase tracking-wide text-un-muted">
+                      Invite list &middot;{" "}
+                      {invites.filter((i) => i.status === "Responded").length}{" "}
+                      of {invites.length} responded
+                    </span>
+                    {invites.some((i) => i.status === "Draft") && (
+                      <button
+                        type="button"
+                        onClick={sendAllPending}
+                        className="text-xs font-semibold text-un-blue-700 hover:text-un-blue-600"
+                      >
+                        Send all pending
+                      </button>
+                    )}
+                  </div>
+                  <ul className="mt-2 space-y-2">
+                    {invites.map((invite) => {
+                      const survey = surveyTemplates.find(
+                        (s) => s.id === invite.surveyId,
+                      );
+                      return (
+                        <li
+                          key={invite.id}
+                          className="flex items-center justify-between gap-3 rounded-lg border border-un-border bg-un-blue-50/60 px-3 py-2"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate text-sm font-medium text-un-ink">
+                              {invite.name}
+                              {invite.role && (
+                                <span className="font-normal text-un-muted">
+                                  {" "}
+                                  &middot; {invite.role}
+                                </span>
+                              )}
+                            </p>
+                            <p className="truncate text-xs text-un-muted">
+                              {invite.email}
+                              {survey && <> &middot; {survey.name}</>}
+                            </p>
+                          </div>
+                          <div className="flex shrink-0 items-center gap-2">
+                            {invite.status === "Responded" ? (
+                              <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                                &#10003; Responded {invite.respondedAt}
+                              </span>
+                            ) : invite.status === "Sent" ? (
+                              <>
+                                <span className="rounded-full bg-un-gold-100 px-2.5 py-1 text-xs font-semibold text-un-gold-600 ring-1 ring-un-gold-500/30">
+                                  Sent {invite.sentAt}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => markResponded(invite.id)}
+                                  className="rounded-full border border-un-border px-3 py-1 text-xs font-semibold text-un-blue-700 hover:bg-un-blue-50"
+                                >
+                                  Mark as responded
+                                </button>
+                              </>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => sendInvite(invite.id)}
+                                className="rounded-full bg-un-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-un-blue-700"
+                              >
+                                Send invite
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => removeInvite(invite.id)}
+                              aria-label={`Remove ${invite.name}`}
+                              className="text-un-muted hover:text-un-blue-700"
+                            >
+                              &times;
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
+            </Panel>
+          </div>
+
+            <div className="flex flex-wrap justify-between gap-3">
+              <button
+                type="button"
+                onClick={() => setStep(1)}
+                className="rounded-full border border-un-border px-5 py-2.5 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
+              >
+                &larr; Back
+              </button>
+              <div className="flex gap-3">
+                {invites.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={handleSaveAndWaitForResponses}
+                    className="rounded-full border border-orange-300 bg-orange-50 px-5 py-2.5 text-sm font-semibold text-orange-700 hover:bg-orange-100"
+                  >
+                    Save &amp; wait for responses
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setStep(3)}
+                  className="rounded-full bg-un-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-un-blue-700"
+                >
+                  Continue to Sources &amp; Draft &rarr;
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {step === 3 && (
+        <div className="mt-8 grid gap-6 lg:grid-cols-[380px_1fr]">
+          {/* Left column: light-touch inputs, documents first */}
+          <div className="space-y-5">
+            <button
+              type="button"
+              onClick={() => setStep(2)}
+              className="text-sm font-semibold text-un-blue-700 hover:text-un-blue-600"
+            >
+              &larr; Back to Send Surveys
+            </button>
 
             <Panel
               title="Attach source documents"
@@ -918,6 +1362,16 @@ export default function NewReviewPage() {
                         {interviewees.length} added
                       </span>
                     </div>
+                    {invites.length > 0 && (
+                      <button
+                        type="button"
+                        onClick={addInvitesToPeopleConsulted}
+                        className="mt-3 w-full rounded-lg border border-dashed border-un-border px-3 py-1.5 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
+                      >
+                        + Add {invites.length} survey invite
+                        {invites.length === 1 ? "" : "s"} from Step 2
+                      </button>
+                    )}
                     <div className="mt-3">
                       <IntervieweeField
                         people={interviewees}
@@ -930,6 +1384,7 @@ export default function NewReviewPage() {
             </div>
           </div>
         </div>
+        )}
       </div>
 
       <style jsx global>{`
@@ -949,6 +1404,56 @@ export default function NewReviewPage() {
         }
       `}</style>
     </main>
+  );
+}
+
+function StepIndicator({
+  current,
+  onSelect,
+}: {
+  current: Step;
+  onSelect: (step: Step) => void;
+}) {
+  return (
+    <ol className="mt-6 flex items-center gap-2 sm:gap-3">
+      {STEPS.map((s, index) => {
+        const isCurrent = s.id === current;
+        const isDone = s.id < current;
+        return (
+          <li key={s.id} className="flex items-center gap-2 sm:gap-3">
+            <button
+              type="button"
+              onClick={() => onSelect(s.id)}
+              className={
+                "flex items-center gap-2 rounded-full px-3 py-1.5 text-xs sm:text-sm font-semibold transition-colors " +
+                (isCurrent
+                  ? "bg-un-blue-600 text-white shadow-sm"
+                  : isDone
+                    ? "bg-un-blue-50 text-un-blue-700 hover:bg-un-blue-100"
+                    : "bg-un-surface text-un-muted ring-1 ring-un-border hover:text-un-blue-700")
+              }
+            >
+              <span
+                className={
+                  "flex h-4 w-4 shrink-0 items-center justify-center rounded-full text-[0.65rem] " +
+                  (isCurrent
+                    ? "bg-white text-un-blue-700"
+                    : isDone
+                      ? "bg-un-blue-600 text-white"
+                      : "bg-un-border text-un-muted")
+                }
+              >
+                {isDone ? "✓" : s.id}
+              </span>
+              {s.label}
+            </button>
+            {index < STEPS.length - 1 && (
+              <span className="hidden h-px w-6 bg-un-border sm:block" />
+            )}
+          </li>
+        );
+      })}
+    </ol>
   );
 }
 
