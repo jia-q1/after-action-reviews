@@ -1,17 +1,14 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import {
-  getReviewBySlug,
-  reviews,
-  priorityStyles,
-  type Review,
-} from "@/data/reviews";
+import { priorityStyles, type Review } from "@/data/reviews";
+import { getRecordBySlug } from "@/lib/db";
 import StatusBadge from "@/components/status-badge";
 import { formatMonthYear, formatPeriod } from "@/lib/format";
 
-export function generateStaticParams() {
-  return reviews.map((review) => ({ slug: review.slug }));
-}
+// Content now comes from the database and can change at any time (someone
+// edits it, a new draft is saved), so this page must not be statically
+// cached — always render fresh from the current data.
+export const dynamic = "force-dynamic";
 
 export default async function ReviewPage({
   params,
@@ -19,7 +16,7 @@ export default async function ReviewPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const review = getReviewBySlug(slug);
+  const review = getRecordBySlug(slug);
 
   if (!review) {
     notFound();
@@ -221,12 +218,12 @@ export default async function ReviewPage({
                   View full report on SharePoint
                 </a>
               )}
-              <button
-                type="button"
-                className="w-full rounded-full border border-un-border px-4 py-2.5 text-sm font-semibold text-un-blue-700 transition-colors hover:bg-un-blue-50"
+              <Link
+                href={`/new?edit=${encodeURIComponent(review.slug)}`}
+                className="block w-full rounded-full border border-un-border px-4 py-2.5 text-center text-sm font-semibold text-un-blue-700 transition-colors hover:bg-un-blue-50"
               >
                 {isInProgress ? "Continue drafting" : "Edit this review"}
-              </button>
+              </Link>
               <button
                 type="button"
                 className="w-full rounded-full border border-un-border px-4 py-2.5 text-sm font-semibold text-un-blue-700 transition-colors hover:bg-un-blue-50"

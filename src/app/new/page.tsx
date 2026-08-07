@@ -14,19 +14,20 @@ import {
   type PriorityLevel,
   type ResponseArea,
   type ReviewStage,
+  type ReviewStatus,
   type TimelineEntry,
 } from "@/data/reviews";
 import { formatPeriod } from "@/lib/format";
 import {
-  getSavedDraft,
-  upsertSavedDraft,
+  getRecord,
+  saveRecord,
   type AarOverview as OverviewState,
+  type AarRecord,
   type DocumentSource,
   type InviteStatus,
   type ReportDraft as Draft,
-  type SavedAarDraft,
   type SurveyInvite,
-} from "@/lib/draft-storage";
+} from "@/lib/aar-store";
 
 const STEPS = [
   { id: 1, label: "AAR Basics" },
@@ -177,7 +178,14 @@ function NewReviewWorkspace() {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const [draftId, setDraftId] = useState("");
+  const [slug, setSlug] = useState("");
+  const [recordStatus, setRecordStatus] = useState<ReviewStatus>("In Progress");
+  const [tags, setTags] = useState<string[]>([]);
+  // Preserve the original title/summary on edit instead of always
+  // recomputing them from the current form — only auto-generated when
+  // empty (i.e. a brand-new record that never had one).
+  const [savedTitle, setSavedTitle] = useState("");
+  const [savedSummary, setSavedSummary] = useState("");
   const [step, setStep] = useState<Step>(1);
 
   const [overview, setOverview] = useState<OverviewState>(EMPTY_OVERVIEW);
@@ -205,31 +213,70 @@ function NewReviewWorkspace() {
   const [findingsMatrix, setFindingsMatrix] = useState<FindingRow[]>([]);
   const [interviewees, setInterviewees] = useState<Interviewee[]>([]);
 
-  // One-time hydration from an external source (the URL and localStorage)
+  // One-time hydration from an external source (the URL and the database)
   // on mount — not state derived from props/state, so setState here is the
   // sanctioned pattern rather than the anti-pattern this rule targets.
   /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
-    const paramId = searchParams.get("draft");
-    if (paramId) {
-      const saved = getSavedDraft(paramId);
-      if (saved) {
-        setDraftId(saved.id);
-        setOverview(saved.overview);
-        setInvites(saved.invites);
-        setDocuments(saved.documents);
-        setMethods(saved.methods);
-        setNotes(saved.notes);
-        setDraft(saved.reportDraft);
-        setTimeline(saved.timeline);
-        setFindingsMatrix(saved.findingsMatrix);
-        setInterviewees(saved.interviewees);
-        setStep(saved.step);
-        if (saved.reportDraft.executiveSummary) setStatus("ready");
-        return;
-      }
+    const paramSlug = searchParams.get("edit");
+    if (paramSlug) {
+      getRecord(paramSlug).then((record) => {
+        if (!record) {
+          setSlug(crypto.randomUUID());
+          return;
+        }
+        setSlug(record.slug);
+        setRecordStatus(record.status);
+        setTags(record.tags);
+        setSavedTitle(record.title);
+        setSavedSummary(record.summary);
+        setOverview({
+          country: record.country,
+          crisisType: record.crisisType,
+          periodStart: record.periodStart,
+          periodEnd: record.periodEnd,
+          office: record.office,
+          leadAuthor: record.leadAuthor,
+          stage: record.stage ?? "Drafting",
+          sharepointUrl: record.sharepointUrl ?? "",
+        });
+        setInvites(record.invites);
+        setDocuments(record.documents);
+        setMethods(record.methodology.dataCollectionMethods);
+        setNotes(record.notes);
+        setDraft({
+          executiveSummary: record.executiveSummary,
+          countrySituation: record.introduction.countrySituation,
+          objectives: record.introduction.objectives,
+          scope: record.methodology.scope,
+          dataCollection: record.methodology.dataCollection,
+          contextualFactors: record.analysis.contextualFactors,
+          inCountryStructure: record.analysis.inCountryStructure,
+          corporateResponseMechanisms: record.analysis.corporateResponseMechanisms,
+          deploymentOfExperts: record.analysis.deploymentOfExperts,
+          programmaticResponse: record.analysis.programmaticResponse,
+          operationalResponse: record.analysis.operationalResponse,
+          coordination: record.analysis.coordination,
+          communicationAndResourceMobilization:
+            record.analysis.communicationAndResourceMobilization,
+        });
+        setTimeline(record.analysis.timeline);
+        setFindingsMatrix(record.findingsMatrix);
+        setInterviewees(record.interviewees);
+
+        if (record.stage === "Awaiting Survey Responses") setStep(2);
+        else if (
+          record.executiveSummary ||
+          record.documents.length > 0 ||
+          record.invites.length > 0
+        )
+          setStep(3);
+
+        if (record.executiveSummary) setStatus("ready");
+      });
+      return;
     }
-    setDraftId(crypto.randomUUID());
+    setSlug(crypto.randomUUID());
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
@@ -360,42 +407,79 @@ function NewReviewWorkspace() {
     });
   }
 
-  function buildSavedDraft(opts?: {
-    overview?: OverviewState;
-    step?: Step;
-  }): SavedAarDraft {
+  function buildRecord(opts?: { overview?: OverviewState }): AarRecord {
+    const ov = opts?.overview ?? overview;
     return {
-      id: draftId,
-      step: opts?.step ?? step,
-      updatedAt: new Date().toISOString(),
-      overview: opts?.overview ?? overview,
-      invites,
-      documents,
-      methods,
-      notes,
-      reportDraft: draft,
-      timeline,
+      slug,
+      country: ov.country,
+      crisisType: ov.crisisType,
+      title:
+        savedTitle ||
+        (ov.country ? `${ov.country} — ${ov.crisisType}` : "Untitled AAR"),
+      summary: savedSummary || draft.executiveSummary.slice(0, 220),
+      status: recordStatus,
+      stage: ov.stage,
+      periodStart: ov.periodStart,
+      periodEnd: ov.periodEnd,
+      office: ov.office,
+      leadAuthor: ov.leadAuthor,
+      sharepointUrl: ov.sharepointUrl || undefined,
+      tags,
+      executiveSummary: draft.executiveSummary,
+      introduction: {
+        countrySituation: draft.countrySituation,
+        objectives: draft.objectives,
+      },
+      methodology: {
+        scope: draft.scope,
+        dataCollectionMethods: methods,
+        dataCollection: draft.dataCollection,
+      },
+      analysis: {
+        contextualFactors: draft.contextualFactors,
+        timeline,
+        inCountryStructure: draft.inCountryStructure,
+        corporateResponseMechanisms: draft.corporateResponseMechanisms,
+        deploymentOfExperts: draft.deploymentOfExperts,
+        programmaticResponse: draft.programmaticResponse,
+        operationalResponse: draft.operationalResponse,
+        coordination: draft.coordination,
+        communicationAndResourceMobilization:
+          draft.communicationAndResourceMobilization,
+      },
+      keyFindings,
+      recommendations,
       findingsMatrix,
       interviewees,
+      invites,
+      documents,
+      notes,
+      updatedAt: new Date().toISOString(),
     };
   }
 
-  function handleSaveAsDraft() {
-    if (!draftId) return;
-    upsertSavedDraft(buildSavedDraft());
+  async function handleSaveAsDraft() {
+    if (!slug) return;
+    await saveRecord(buildRecord());
     router.push("/");
   }
 
-  function handleSaveAndWaitForResponses() {
-    if (!draftId) return;
+  async function handleSaveAndWaitForResponses() {
+    if (!slug) return;
     const updatedOverview: OverviewState = {
       ...overview,
       stage: "Awaiting Survey Responses",
     };
     setOverview(updatedOverview);
-    upsertSavedDraft(
-      buildSavedDraft({ overview: updatedOverview, step: 2 }),
-    );
+    await saveRecord(buildRecord({ overview: updatedOverview }));
+    router.push("/");
+  }
+
+  async function handleSubmitForReview() {
+    if (!slug) return;
+    const updatedOverview: OverviewState = { ...overview, stage: "In Review" };
+    setOverview(updatedOverview);
+    await saveRecord(buildRecord({ overview: updatedOverview }));
     router.push("/");
   }
 
@@ -539,6 +623,7 @@ function NewReviewWorkspace() {
             </button>
             <button
               type="button"
+              onClick={handleSubmitForReview}
               disabled={status !== "ready"}
               className="rounded-full bg-un-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-un-blue-700 disabled:cursor-not-allowed disabled:bg-un-border disabled:text-un-muted"
             >
@@ -1611,8 +1696,8 @@ function TimelineField({
               key={index}
               className="flex items-start gap-2 rounded-lg border border-un-border bg-un-blue-50/60 px-3 py-1.5 text-sm"
             >
-              <span className="shrink-0 font-mono text-xs text-un-blue-700">
-                {entry.date || "—"}
+              <span className="w-20 shrink-0 font-mono text-xs text-un-blue-700">
+                {entry.date || "no date"}
               </span>
               <span className="flex-1 text-un-ink">{entry.event}</span>
               <button
@@ -1632,12 +1717,14 @@ function TimelineField({
         </p>
       )}
       <div className="flex gap-2">
-        <input
-          type="date"
-          value={date}
-          onChange={(e) => setDate(e.target.value)}
-          className="input w-36 shrink-0"
-        />
+        <div className="w-36 shrink-0">
+          <input
+            type="date"
+            value={date}
+            onChange={(e) => setDate(e.target.value)}
+            className="input"
+          />
+        </div>
         <input
           value={event}
           onChange={(e) => setEvent(e.target.value)}
