@@ -243,6 +243,16 @@ function NewReviewWorkspace() {
     [findingsMatrix],
   );
 
+  const roleValue = inviteForm.role.trim().toLowerCase();
+  const surveysForRole = roleValue
+    ? surveyTemplates.filter((s) =>
+        s.suggestedRoles.some((r) => r.toLowerCase() === roleValue),
+      )
+    : [];
+  const otherSurveysForRole = surveysForRole.filter(
+    (s) => s.id !== inviteForm.surveyId,
+  );
+
   function addFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
     const added = Array.from(fileList).map((file) => ({
@@ -734,6 +744,18 @@ function NewReviewWorkspace() {
                         </span>
                       ))}
                     </div>
+                    {survey.suggestedRoles.length > 0 ? (
+                      <p className="mt-2 text-xs text-un-muted">
+                        <span className="font-semibold text-un-ink">
+                          Typical roles:
+                        </span>{" "}
+                        {survey.suggestedRoles.join(", ")}
+                      </p>
+                    ) : (
+                      <p className="mt-2 text-xs text-un-muted">
+                        External audience — no fixed role list.
+                      </p>
+                    )}
                     <details className="group mt-2.5">
                       <summary className="cursor-pointer list-none text-xs font-semibold text-un-blue-700 marker:content-none">
                         <span className="group-open:hidden">
@@ -801,6 +823,35 @@ function NewReviewWorkspace() {
                         <option key={role} value={role} />
                       ))}
                   </datalist>
+                  {otherSurveysForRole.length > 0 && (
+                    <p className="mt-1.5 text-xs text-un-muted">
+                      Usually surveyed via{" "}
+                      {otherSurveysForRole.map((s, i) => (
+                        <span key={s.id}>
+                          {i > 0 && ", "}
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setInviteForm((f) => ({
+                                ...f,
+                                surveyId: s.id,
+                              }))
+                            }
+                            className="font-semibold text-un-blue-700 underline decoration-dotted hover:text-un-blue-600"
+                          >
+                            {s.name}
+                          </button>
+                        </span>
+                      ))}
+                      .
+                    </p>
+                  )}
+                  {surveysForRole.length > 0 &&
+                    otherSurveysForRole.length === 0 && (
+                      <p className="mt-1.5 text-xs text-emerald-700">
+                        &#10003; Matches the selected survey
+                      </p>
+                    )}
                 </Field>
                 <Field label="Unit / office">
                   <input
