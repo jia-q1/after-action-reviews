@@ -705,9 +705,9 @@ function NewReviewWorkspace() {
           <div className="grid gap-5 lg:grid-cols-[360px_1fr] lg:items-start">
             <Panel title="Available surveys">
               <p className="text-xs text-un-muted">
-                Question content isn&apos;t written yet — these are
-                placeholder templates so you can start inviting people and
-                fill in the real questions later.
+                Draft question sets — a starting point inferred from the
+                AAR report structure, not yet reviewed by the Crisis
+                Bureau. Refine before sending for real.
               </p>
               <div className="mt-3 grid gap-3">
                 {surveyTemplates.map((survey) => (
@@ -734,6 +734,29 @@ function NewReviewWorkspace() {
                         </span>
                       ))}
                     </div>
+                    <details className="group mt-2.5">
+                      <summary className="cursor-pointer list-none text-xs font-semibold text-un-blue-700 marker:content-none">
+                        <span className="group-open:hidden">
+                          View {survey.questions.length} draft questions
+                        </span>
+                        <span className="hidden group-open:inline">
+                          Hide questions
+                        </span>
+                      </summary>
+                      <ol className="mt-2 space-y-1.5 border-t border-un-border pt-2">
+                        {survey.questions.map((question, index) => (
+                          <li
+                            key={index}
+                            className="flex gap-2 text-xs text-un-ink/90"
+                          >
+                            <span className="shrink-0 text-un-muted">
+                              {index + 1}.
+                            </span>
+                            {question}
+                          </li>
+                        ))}
+                      </ol>
+                    </details>
                   </div>
                 ))}
               </div>
@@ -769,7 +792,15 @@ function NewReviewWorkspace() {
                     }
                     placeholder="e.g. Crisis Coordinator"
                     className="input"
+                    list="role-suggestions"
                   />
+                  <datalist id="role-suggestions">
+                    {surveyTemplates
+                      .find((s) => s.id === inviteForm.surveyId)
+                      ?.suggestedRoles.map((role) => (
+                        <option key={role} value={role} />
+                      ))}
+                  </datalist>
                 </Field>
                 <Field label="Unit / office">
                   <input

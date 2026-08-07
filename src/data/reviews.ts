@@ -49,15 +49,24 @@ export const priorityLevels: PriorityLevel[] = [
   "Low",
 ];
 
-// Placeholder survey templates — content (actual questions) is not defined
-// yet. Each stands in for a questionnaire that would be sent to a specific
-// audience and feeds specific response areas of the report once answered.
+// Survey templates for gathering AAR input from different audiences. The
+// official AAR report template (Annex 4) names "interview/survey/focus
+// group questions" as a required annex but leaves the questions themselves
+// blank, so the question sets below are a drafted starting point — inferred
+// from the report's 3.1-3.9 structure and standard AAR practice, not
+// sourced from the template. Treat them as a first draft to be reviewed
+// before real use.
 export type SurveyTemplate = {
   id: string;
   name: string;
   audience: string;
   description: string;
   informsSections: ResponseArea[];
+  questions: string[];
+  // A short list of role titles seen in real AAR documents for this
+  // audience, offered as autocomplete suggestions on the Role field — not
+  // exhaustive, and not a restriction on what can be entered.
+  suggestedRoles: string[];
 };
 
 export const surveyTemplates: SurveyTemplate[] = [
@@ -66,19 +75,49 @@ export const surveyTemplates: SurveyTemplate[] = [
     name: "Response Team Debrief",
     audience: "Country Office staff directly involved in the response",
     description:
-      "Placeholder — day-to-day account of what worked, what didn't, and where delivery hit friction.",
+      "Day-to-day account of what worked, what didn't, and where delivery hit friction.",
     informsSections: ["Operational Response", "Programmatic Response", "Deployments"],
+    questions: [
+      "What was your role during the response, and roughly how long were you actively involved?",
+      "Walk through the first two weeks of the response from your perspective — what stands out?",
+      "What worked well in how the Country Office mobilized and organized its response?",
+      "Where did operational processes (procurement, logistics, HR, finance) create delays or bottlenecks?",
+      "If experts or surge personnel were deployed, how well did their arrival align with when they were actually needed?",
+      "What programmatic activities had the strongest results, and why?",
+      "What is the one change that would have made the biggest difference to your work during this response?",
+    ],
+    suggestedRoles: [
+      "Operations Manager",
+      "Operations Specialist",
+      "Programme Analyst",
+      "Project Analyst",
+    ],
   },
   {
     id: "leadership-reflection",
     name: "Leadership & Management Reflection",
     audience: "Resident Rep / Deputy Rep / senior management",
     description:
-      "Placeholder — corporate mechanisms, resourcing decisions, and strategic coordination calls.",
+      "Corporate mechanisms, resourcing decisions, and strategic coordination calls.",
     informsSections: [
       "Corporate Response Mechanisms",
       "Country Office Response Structure and Capacities",
       "Communication and Resource Mobilization",
+    ],
+    questions: [
+      "How would you assess the speed and adequacy of corporate support (Crisis Board activation, funding, roster deployment) once the crisis began?",
+      "Did the Country Office have the structure and standing capacity it needed at the moment the crisis hit? What was missing, if anything?",
+      "How were priorities and trade-offs decided in the first month, and by whom?",
+      "How effective was resource mobilization (donor engagement, appeals, internal funding) in meeting the response's needs?",
+      "What corporate policies, procedures, or systems helped — or got in the way — during this response?",
+      "Looking back, what would you do differently if a similar crisis happened again next year?",
+    ],
+    suggestedRoles: [
+      "Resident Representative",
+      "Former Resident Representative",
+      "Deputy Resident Representative",
+      "Assistant Resident Representative",
+      "Regional Advisor",
     ],
   },
   {
@@ -86,16 +125,40 @@ export const surveyTemplates: SurveyTemplate[] = [
     name: "Partner & Coordination Feedback",
     audience: "External partners, cluster leads, government counterparts",
     description:
-      "Placeholder — how coordination and joint planning looked from outside UNDP.",
+      "How coordination and joint planning looked from outside UNDP.",
     informsSections: ["Coordination", "Communication and Resource Mobilization"],
+    questions: [
+      "How would you describe UNDP's engagement in coordination structures (cluster meetings, joint planning forums) during this response?",
+      "Was UNDP's role and added value in the response clear to your organization?",
+      "How timely and useful was communication from UNDP throughout the response?",
+      "Were there moments where better coordination with UNDP could have improved outcomes for affected communities? Please describe.",
+      "How would you rate joint planning and information-sharing with UNDP overall? (1–5)",
+      "What would most improve UNDP's coordination with partners like yours in a future response?",
+    ],
+    // External audience — the CO / Regional / HQ role titles on file don't
+    // apply here, so no suggestions are offered; the field stays free text.
+    suggestedRoles: [],
   },
   {
     id: "field-frontline",
     name: "Field / Frontline Staff Check-in",
     audience: "Field-based and frontline delivery staff",
     description:
-      "Placeholder — ground-level experience of programmatic delivery and community response.",
+      "Ground-level experience of programmatic delivery and community response.",
     informsSections: ["Programmatic Response", "Operational Response"],
+    questions: [
+      "What was your day-to-day experience delivering activities during the response?",
+      "What resources, supplies, or approvals arrived late — and how did that affect your work?",
+      "How did affected communities respond to the assistance provided? Any notable feedback, positive or negative?",
+      "Were you clear on your role, reporting lines, and who to contact for urgent issues?",
+      "What one thing would make frontline delivery smoother next time?",
+    ],
+    suggestedRoles: [
+      "Programme Specialist",
+      "Country Programme Specialist",
+      "Project Analyst",
+      "Programme Analyst",
+    ],
   },
 ];
 
