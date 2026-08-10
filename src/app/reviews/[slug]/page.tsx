@@ -16,7 +16,7 @@ export default async function ReviewPage({
   params: Promise<{ slug: string }>;
 }) {
   const { slug } = await params;
-  const review = getRecordBySlug(slug);
+  const review = await getRecordBySlug(slug);
 
   if (!review) {
     notFound();

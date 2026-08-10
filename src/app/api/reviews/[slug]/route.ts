@@ -11,7 +11,7 @@ export async function GET(
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await params;
-  const record = getRecordBySlug(slug);
+  const record = await getRecordBySlug(slug);
   if (!record) {
     return NextResponse.json({ error: "Not found" }, { status: 404 });
   }
@@ -24,7 +24,7 @@ export async function PATCH(
 ) {
   const { slug } = await params;
   const body = (await request.json()) as AarRecord;
-  const saved = upsertRecord({ ...body, slug });
+  const saved = await upsertRecord({ ...body, slug });
   return NextResponse.json(saved);
 }
 
@@ -33,6 +33,6 @@ export async function DELETE(
   { params }: { params: Promise<{ slug: string }> },
 ) {
   const { slug } = await params;
-  deleteRecord(slug);
+  await deleteRecord(slug);
   return NextResponse.json({ ok: true });
 }
