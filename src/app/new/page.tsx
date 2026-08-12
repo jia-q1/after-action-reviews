@@ -7,7 +7,6 @@ import {
   dataCollectionMethods,
   priorityLevels,
   responseAreas,
-  surveyTemplates,
   type CrisisType,
   type FindingRow,
   type Interviewee,
@@ -19,14 +18,19 @@ import {
 } from "@/data/reviews";
 import { formatPeriod } from "@/lib/format";
 import {
+  createInvite,
+  deleteInvite,
   getRecord,
+  listInvites,
+  listSurveyTemplates,
+  markInviteSent,
   saveRecord,
   type AarOverview as OverviewState,
   type AarRecord,
   type DocumentSource,
-  type InviteStatus,
   type ReportDraft as Draft,
   type SurveyInvite,
+  type SurveyTemplate,
 } from "@/lib/aar-store";
 
 const STEPS = [
@@ -56,7 +60,20 @@ const EMPTY_INVITE_FORM = {
   role: "",
   unit: "",
   email: "",
-  surveyId: surveyTemplates[0].id,
+  templateId: "",
+};
+
+// Maps each survey's declared response areas to the report field they
+// should feed when a contributor's answers get folded into the AI draft.
+const RESPONSE_AREA_TO_FIELD: Record<ResponseArea, keyof Draft> = {
+  "Corporate Response Mechanisms": "corporateResponseMechanisms",
+  "Country Office Response Structure and Capacities": "inCountryStructure",
+  Deployments: "deploymentOfExperts",
+  "Programmatic Response": "programmaticResponse",
+  "Operational Response": "operationalResponse",
+  Coordination: "coordination",
+  "Communication and Resource Mobilization":
+    "communicationAndResourceMobilization",
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -154,6 +171,22 @@ function toProse(points: string[]) {
     .join(" ");
 }
 
+// Keeps individual AAR records well under typical row/payload limits once
+// attached files are stored inline as base64.
+const MAX_FILE_BYTES = 15 * 1024 * 1024;
+
+function readFileAsBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result as string;
+      resolve(result.slice(result.indexOf(",") + 1));
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
 function formatBytes(bytes?: number) {
   if (!bytes) return "";
   const units = ["B", "KB", "MB", "GB"];
@@ -191,12 +224,14 @@ function NewReviewWorkspace() {
   const [overview, setOverview] = useState<OverviewState>(EMPTY_OVERVIEW);
   const [advancedOpen, setAdvancedOpen] = useState(false);
 
+  const [templates, setTemplates] = useState<SurveyTemplate[]>([]);
   const [invites, setInvites] = useState<SurveyInvite[]>([]);
   const [inviteForm, setInviteForm] = useState(EMPTY_INVITE_FORM);
 
   const [documents, setDocuments] = useState<DocumentSource[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [manualSourceName, setManualSourceName] = useState("");
+  const [fileError, setFileError] = useState<string | null>(null);
 
   const [methods, setMethods] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
@@ -240,7 +275,6 @@ function NewReviewWorkspace() {
           stage: record.stage ?? "Drafting",
           sharepointUrl: record.sharepointUrl ?? "",
         });
-        setInvites(record.invites);
         setDocuments(record.documents);
         setMethods(record.methodology.dataCollectionMethods);
         setNotes(record.notes);
@@ -265,11 +299,7 @@ function NewReviewWorkspace() {
         setInterviewees(record.interviewees);
 
         if (record.stage === "Awaiting Survey Responses") setStep(2);
-        else if (
-          record.executiveSummary ||
-          record.documents.length > 0 ||
-          record.invites.length > 0
-        )
+        else if (record.executiveSummary || record.documents.length > 0)
           setStep(3);
 
         if (record.executiveSummary) setStatus("ready");
@@ -280,6 +310,22 @@ function NewReviewWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   /* eslint-enable react-hooks/set-state-in-effect */
+
+  // Survey templates are shared reference data — load once, independent of
+  // which AAR is being edited.
+  useEffect(() => {
+    listSurveyTemplates().then((loaded) => {
+      setTemplates(loaded);
+      setInviteForm((f) => (f.templateId ? f : { ...f, templateId: loaded[0]?.id ?? "" }));
+    });
+  }, []);
+
+  // Invites live in their own table now, not the AAR record — load (or
+  // reload) whenever the current record's slug is known.
+  useEffect(() => {
+    if (!slug) return;
+    listInvites(slug).then(setInvites);
+  }, [slug]);
 
   const keyFindings = useMemo(
     () => findingsMatrix.map((r) => r.finding).filter(Boolean),
@@ -292,22 +338,41 @@ function NewReviewWorkspace() {
 
   const roleValue = inviteForm.role.trim().toLowerCase();
   const surveysForRole = roleValue
-    ? surveyTemplates.filter((s) =>
+    ? templates.filter((s) =>
         s.suggestedRoles.some((r) => r.toLowerCase() === roleValue),
       )
     : [];
   const otherSurveysForRole = surveysForRole.filter(
-    (s) => s.id !== inviteForm.surveyId,
+    (s) => s.id !== inviteForm.templateId,
   );
 
-  function addFiles(fileList: FileList | null) {
+  async function addFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
-    const added = Array.from(fileList).map((file) => ({
-      id: crypto.randomUUID(),
-      name: file.name,
-      size: file.size,
-    }));
-    setDocuments((prev) => [...prev, ...added]);
+    setFileError(null);
+
+    const files = Array.from(fileList);
+    const oversized = files.filter((f) => f.size > MAX_FILE_BYTES);
+    const readable = files.filter((f) => f.size <= MAX_FILE_BYTES);
+    if (oversized.length > 0) {
+      setFileError(
+        `${oversized.map((f) => f.name).join(", ")} ${oversized.length === 1 ? "is" : "are"} over the 15 MB limit and ${oversized.length === 1 ? "wasn't" : "weren't"} attached.`,
+      );
+    }
+
+    try {
+      const added = await Promise.all(
+        readable.map(async (file) => ({
+          id: crypto.randomUUID(),
+          name: file.name,
+          size: file.size,
+          mimeType: file.type || undefined,
+          content: await readFileAsBase64(file),
+        })),
+      );
+      setDocuments((prev) => [...prev, ...added]);
+    } catch {
+      setFileError("Couldn't read one of those files. Try attaching it again.");
+    }
   }
 
   function addManualSource() {
@@ -323,74 +388,34 @@ function NewReviewWorkspace() {
     setDocuments((prev) => prev.filter((d) => d.id !== id));
   }
 
-  function addInvite() {
-    if (!inviteForm.name.trim() || !inviteForm.email.trim()) return;
-    setInvites((prev) => [
-      ...prev,
-      { id: crypto.randomUUID(), status: "Draft", ...inviteForm },
-    ]);
-    setInviteForm(EMPTY_INVITE_FORM);
+  async function addInvite() {
+    if (!inviteForm.name.trim() || !inviteForm.email.trim() || !slug) return;
+    const created = await createInvite({ reviewSlug: slug, ...inviteForm });
+    if (created) setInvites((prev) => [...prev, created]);
+    setInviteForm((f) => ({ ...EMPTY_INVITE_FORM, templateId: f.templateId }));
   }
 
-  function removeInvite(id: string) {
+  async function removeInvite(id: string) {
     setInvites((prev) => prev.filter((i) => i.id !== id));
+    await deleteInvite(id);
   }
 
-  function sendInvite(id: string) {
-    setInvites((prev) =>
-      prev.map((invite) =>
-        invite.id === id
-          ? {
-              ...invite,
-              status: "Sent",
-              sentAt: new Date().toLocaleString("en-US", {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-              }),
-            }
-          : invite,
-      ),
-    );
-  }
+  const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
 
-  function sendAllPending() {
-    setInvites((prev) =>
-      prev.map((invite) =>
-        invite.status === "Draft"
-          ? {
-              ...invite,
-              status: "Sent",
-              sentAt: new Date().toLocaleString("en-US", {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-              }),
-            }
-          : invite,
-      ),
-    );
-  }
-
-  function markResponded(id: string) {
-    setInvites((prev) =>
-      prev.map((invite) =>
-        invite.id === id
-          ? {
-              ...invite,
-              status: "Responded" as InviteStatus,
-              respondedAt: new Date().toLocaleString("en-US", {
-                month: "short",
-                day: "numeric",
-                hour: "numeric",
-                minute: "2-digit",
-              }),
-            }
-          : invite,
-      ),
-    );
+  async function copyInviteLink(id: string) {
+    const link = `${window.location.origin}/respond/${id}`;
+    try {
+      await navigator.clipboard.writeText(link);
+      setCopiedInviteId(id);
+      window.setTimeout(() => setCopiedInviteId((v) => (v === id ? null : v)), 2000);
+    } catch {
+      // Clipboard access can fail (older browsers, permissions); marking
+      // the invite as sent is the important part, so continue regardless.
+    }
+    const updated = await markInviteSent(id);
+    if (updated) {
+      setInvites((prev) => prev.map((i) => (i.id === id ? updated : i)));
+    }
   }
 
   function addInvitesToPeopleConsulted() {
@@ -451,7 +476,6 @@ function NewReviewWorkspace() {
       recommendations,
       findingsMatrix,
       interviewees,
-      invites,
       documents,
       notes,
       updatedAt: new Date().toISOString(),
@@ -498,9 +522,26 @@ function NewReviewWorkspace() {
         buckets[field] = [...(buckets[field] ?? []), point];
       }
 
+      const respondedInvites = invites.filter(
+        (i) => i.status === "Responded" && i.answers,
+      );
+      for (const invite of respondedInvites) {
+        const template = templates.find((t) => t.id === invite.templateId);
+        if (!template) continue;
+        const answerPoints = template.questions
+          .map((q) => invite.answers?.[q.id]?.trim())
+          .filter((a): a is string => Boolean(a));
+        if (answerPoints.length === 0) continue;
+        for (const area of template.informsSections) {
+          const field = RESPONSE_AREA_TO_FIELD[area];
+          buckets[field] = [...(buckets[field] ?? []), ...answerPoints];
+        }
+      }
+
       const docNames = documents.map((d) => d.name);
       const hasDocs = docNames.length > 0;
       const hasNotes = points.length > 0;
+      const hasResponses = respondedInvites.length > 0;
 
       function sectionText(field: keyof Draft, topic: string) {
         const pts = buckets[field];
@@ -522,12 +563,17 @@ function NewReviewWorkspace() {
       const summaryParts = [
         `This After Action Review examines UNDP's response to the ${crisisLabel} in ${countryLabel}${period ? ` (${period})` : ""}.`,
       ];
-      if (hasDocs) {
+      const sourceLabels = [
+        hasDocs &&
+          `${documents.length} attached source${documents.length === 1 ? "" : "s"}`,
+        hasNotes && "the notes provided",
+        hasResponses &&
+          `${respondedInvites.length} survey response${respondedInvites.length === 1 ? "" : "s"}`,
+      ].filter(Boolean);
+      if (sourceLabels.length > 0) {
         summaryParts.push(
-          `This draft was generated from ${documents.length} attached source${documents.length === 1 ? "" : "s"}${hasNotes ? " and the notes provided" : ""}.`,
+          `This draft was generated from ${sourceLabels.join(", ")}.`,
         );
-      } else if (hasNotes) {
-        summaryParts.push("This draft was generated from the notes provided.");
       } else {
         summaryParts.push(
           "Attach source documents on the left, or add notes, then regenerate to populate this draft.",
@@ -805,7 +851,7 @@ function NewReviewWorkspace() {
                 Bureau. Refine before sending for real.
               </p>
               <div className="mt-3 grid gap-3">
-                {surveyTemplates.map((survey) => (
+                {templates.map((survey) => (
                   <div
                     key={survey.id}
                     className="rounded-xl border border-un-border bg-un-blue-50/40 p-3.5"
@@ -853,13 +899,13 @@ function NewReviewWorkspace() {
                       <ol className="mt-2 space-y-1.5 border-t border-un-border pt-2">
                         {survey.questions.map((question, index) => (
                           <li
-                            key={index}
+                            key={question.id}
                             className="flex gap-2 text-xs text-un-ink/90"
                           >
                             <span className="shrink-0 text-un-muted">
                               {index + 1}.
                             </span>
-                            {question}
+                            {question.text}
                           </li>
                         ))}
                       </ol>
@@ -902,8 +948,8 @@ function NewReviewWorkspace() {
                     list="role-suggestions"
                   />
                   <datalist id="role-suggestions">
-                    {surveyTemplates
-                      .find((s) => s.id === inviteForm.surveyId)
+                    {templates
+                      .find((s) => s.id === inviteForm.templateId)
                       ?.suggestedRoles.map((role) => (
                         <option key={role} value={role} />
                       ))}
@@ -919,7 +965,7 @@ function NewReviewWorkspace() {
                             onClick={() =>
                               setInviteForm((f) => ({
                                 ...f,
-                                surveyId: s.id,
+                                templateId: s.id,
                               }))
                             }
                             className="font-semibold text-un-blue-700 underline decoration-dotted hover:text-un-blue-600"
@@ -962,16 +1008,16 @@ function NewReviewWorkspace() {
                 <div className="sm:col-span-2">
                   <Field label="Survey">
                     <select
-                      value={inviteForm.surveyId}
+                      value={inviteForm.templateId}
                       onChange={(e) =>
                         setInviteForm((f) => ({
                           ...f,
-                          surveyId: e.target.value,
+                          templateId: e.target.value,
                         }))
                       }
                       className="input"
                     >
-                      {surveyTemplates.map((survey) => (
+                      {templates.map((survey) => (
                         <option key={survey.id} value={survey.id}>
                           {survey.name}
                         </option>
@@ -997,77 +1043,92 @@ function NewReviewWorkspace() {
                       {invites.filter((i) => i.status === "Responded").length}{" "}
                       of {invites.length} responded
                     </span>
-                    {invites.some((i) => i.status === "Draft") && (
-                      <button
-                        type="button"
-                        onClick={sendAllPending}
-                        className="text-xs font-semibold text-un-blue-700 hover:text-un-blue-600"
-                      >
-                        Send all pending
-                      </button>
-                    )}
                   </div>
                   <ul className="mt-2 space-y-2">
                     {invites.map((invite) => {
-                      const survey = surveyTemplates.find(
-                        (s) => s.id === invite.surveyId,
+                      const survey = templates.find(
+                        (s) => s.id === invite.templateId,
                       );
                       return (
                         <li
                           key={invite.id}
-                          className="flex items-center justify-between gap-3 rounded-lg border border-un-border bg-un-blue-50/60 px-3 py-2"
+                          className="rounded-lg border border-un-border bg-un-blue-50/60 px-3 py-2"
                         >
-                          <div className="min-w-0">
-                            <p className="truncate text-sm font-medium text-un-ink">
-                              {invite.name}
-                              {invite.role && (
-                                <span className="font-normal text-un-muted">
-                                  {" "}
-                                  &middot; {invite.role}
+                          <div className="flex items-center justify-between gap-3">
+                            <div className="min-w-0">
+                              <p className="truncate text-sm font-medium text-un-ink">
+                                {invite.name}
+                                {invite.role && (
+                                  <span className="font-normal text-un-muted">
+                                    {" "}
+                                    &middot; {invite.role}
+                                  </span>
+                                )}
+                              </p>
+                              <p className="truncate text-xs text-un-muted">
+                                {invite.email}
+                                {survey && <> &middot; {survey.name}</>}
+                              </p>
+                            </div>
+                            <div className="flex shrink-0 items-center gap-2">
+                              {invite.status === "Responded" ? (
+                                <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                                  &#10003; Responded
                                 </span>
-                              )}
-                            </p>
-                            <p className="truncate text-xs text-un-muted">
-                              {invite.email}
-                              {survey && <> &middot; {survey.name}</>}
-                            </p>
-                          </div>
-                          <div className="flex shrink-0 items-center gap-2">
-                            {invite.status === "Responded" ? (
-                              <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
-                                &#10003; Responded {invite.respondedAt}
-                              </span>
-                            ) : invite.status === "Sent" ? (
-                              <>
+                              ) : invite.status === "Sent" ? (
                                 <span className="rounded-full bg-un-gold-100 px-2.5 py-1 text-xs font-semibold text-un-gold-600 ring-1 ring-un-gold-500/30">
-                                  Sent {invite.sentAt}
+                                  Link sent
                                 </span>
-                                <button
-                                  type="button"
-                                  onClick={() => markResponded(invite.id)}
-                                  className="rounded-full border border-un-border px-3 py-1 text-xs font-semibold text-un-blue-700 hover:bg-un-blue-50"
-                                >
-                                  Mark as responded
-                                </button>
-                              </>
-                            ) : (
+                              ) : null}
                               <button
                                 type="button"
-                                onClick={() => sendInvite(invite.id)}
+                                onClick={() => copyInviteLink(invite.id)}
                                 className="rounded-full bg-un-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-un-blue-700"
                               >
-                                Send invite
+                                {copiedInviteId === invite.id
+                                  ? "Link copied!"
+                                  : invite.status === "Draft"
+                                    ? "Copy link"
+                                    : "Copy link again"}
                               </button>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => removeInvite(invite.id)}
-                              aria-label={`Remove ${invite.name}`}
-                              className="text-un-muted hover:text-un-blue-700"
-                            >
-                              &times;
-                            </button>
+                              <button
+                                type="button"
+                                onClick={() => removeInvite(invite.id)}
+                                aria-label={`Remove ${invite.name}`}
+                                className="text-un-muted hover:text-un-blue-700"
+                              >
+                                &times;
+                              </button>
+                            </div>
                           </div>
+                          {invite.status === "Responded" && survey && (
+                            <details className="group mt-2 border-t border-un-border pt-2">
+                              <summary className="cursor-pointer list-none text-xs font-semibold text-un-blue-700 marker:content-none">
+                                <span className="group-open:hidden">
+                                  View answers
+                                </span>
+                                <span className="hidden group-open:inline">
+                                  Hide answers
+                                </span>
+                              </summary>
+                              <dl className="mt-2 space-y-2">
+                                {survey.questions.map((question) => (
+                                  <div key={question.id}>
+                                    <dt className="text-xs font-semibold text-un-ink">
+                                      {question.text}
+                                    </dt>
+                                    <dd className="mt-0.5 text-xs text-un-muted">
+                                      {invite.answers?.[question.id] || (
+                                        <span className="italic">
+                                          Not answered
+                                        </span>
+                                      )}
+                                    </dd>
+                                  </div>
+                                ))}
+                              </dl>
+                            </details>
+                          )}
                         </li>
                       );
                     })}
@@ -1152,7 +1213,10 @@ function NewReviewWorkspace() {
                   type="file"
                   multiple
                   className="hidden"
-                  onChange={(e) => addFiles(e.target.files)}
+                  onChange={(e) => {
+                    addFiles(e.target.files);
+                    e.target.value = "";
+                  }}
                 />
                 <span className="text-un-blue-600">
                   <UploadIcon />
@@ -1164,6 +1228,10 @@ function NewReviewWorkspace() {
                   PDF, Word, Excel, or text files
                 </span>
               </label>
+
+              {fileError && (
+                <p className="mt-2 text-xs text-red-600">{fileError}</p>
+              )}
 
               {documents.length > 0 && (
                 <ul className="mt-3 space-y-2">

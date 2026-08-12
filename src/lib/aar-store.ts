@@ -1,9 +1,9 @@
 // Client-side access to AARs, backed by the real database via API routes
-// (see src/lib/db.ts and src/app/api/reviews/**). Replaces the earlier
+// (see src/lib/db.ts and src/app/api/**). Replaces the earlier
 // localStorage-only prototype: every visitor hitting the same server now
 // reads and writes the same data.
 
-import type { CrisisType, Review, ReviewStage } from "@/data/reviews";
+import type { CrisisType, Review, ReviewStage, ResponseArea } from "@/data/reviews";
 
 export type AarOverview = {
   country: string;
@@ -16,20 +16,15 @@ export type AarOverview = {
   sharepointUrl: string;
 };
 
-export type DocumentSource = { id: string; name: string; size?: number };
-
-export type InviteStatus = "Draft" | "Sent" | "Responded";
-
-export type SurveyInvite = {
+// `content` is the raw file bytes, base64-encoded, so the eventual AI
+// drafting step has something real to read — manually-added sources (no
+// file, just a typed label) have no content.
+export type DocumentSource = {
   id: string;
   name: string;
-  role: string;
-  unit: string;
-  email: string;
-  surveyId: string;
-  status: InviteStatus;
-  sentAt?: string;
-  respondedAt?: string;
+  size?: number;
+  mimeType?: string;
+  content?: string;
 };
 
 export type ReportDraft = {
@@ -49,11 +44,12 @@ export type ReportDraft = {
 };
 
 // The full persisted shape: every field a finished report needs (Review),
-// plus the in-progress workspace extras (who's been invited, what's been
-// attached, scratch notes) that only matter while it's still being put
-// together.
+// plus the in-progress workspace extras (what's been attached, scratch
+// notes) that only matter while it's still being put together. Survey
+// invites are NOT part of this record — they live in their own table (see
+// below) so independent respondents never race against whoever is editing
+// the report itself.
 export type AarRecord = Review & {
-  invites: SurveyInvite[];
   documents: DocumentSource[];
   notes: string;
   updatedAt: string;
@@ -83,4 +79,82 @@ export async function saveRecord(record: AarRecord): Promise<AarRecord> {
     throw new Error(`Failed to save ${record.slug}: ${res.status}`);
   }
   return (await res.json()) as AarRecord;
+}
+
+// --- Survey templates -------------------------------------------------
+
+export type SurveyQuestion = { id: string; text: string; order: number };
+
+export type SurveyTemplate = {
+  id: string;
+  name: string;
+  audience: string;
+  description: string;
+  informsSections: ResponseArea[];
+  suggestedRoles: string[];
+  questions: SurveyQuestion[];
+  updatedAt: string;
+};
+
+export async function listSurveyTemplates(): Promise<SurveyTemplate[]> {
+  const res = await fetch("/api/survey-templates", { cache: "no-store" });
+  if (!res.ok) return [];
+  return (await res.json()) as SurveyTemplate[];
+}
+
+// --- Survey invites -----------------------------------------------------
+
+export type InviteStatus = "Draft" | "Sent" | "Responded";
+
+export type SurveyInvite = {
+  id: string;
+  reviewSlug: string;
+  templateId: string;
+  name: string;
+  role: string;
+  unit: string;
+  email: string;
+  status: InviteStatus;
+  answers: Record<string, string> | null;
+  sentAt: string | null;
+  respondedAt: string | null;
+  createdAt: string;
+};
+
+export async function listInvites(reviewSlug: string): Promise<SurveyInvite[]> {
+  const res = await fetch(
+    `/api/invites?reviewSlug=${encodeURIComponent(reviewSlug)}`,
+    { cache: "no-store" },
+  );
+  if (!res.ok) return [];
+  return (await res.json()) as SurveyInvite[];
+}
+
+export async function createInvite(input: {
+  reviewSlug: string;
+  templateId: string;
+  name: string;
+  role: string;
+  unit: string;
+  email: string;
+}): Promise<SurveyInvite | undefined> {
+  const res = await fetch("/api/invites", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) return undefined;
+  return (await res.json()) as SurveyInvite;
+}
+
+export async function markInviteSent(id: string): Promise<SurveyInvite | undefined> {
+  const res = await fetch(`/api/invites/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+  });
+  if (!res.ok) return undefined;
+  return (await res.json()) as SurveyInvite;
+}
+
+export async function deleteInvite(id: string): Promise<void> {
+  await fetch(`/api/invites/${encodeURIComponent(id)}`, { method: "DELETE" });
 }

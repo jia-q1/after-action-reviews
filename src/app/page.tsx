@@ -3,7 +3,6 @@
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import {
-  crisisTypes,
   reviewYear,
   statusStyles,
   type ReviewStage,
@@ -12,9 +11,18 @@ import ReviewCard from "@/components/review-card";
 import { formatPeriod } from "@/lib/format";
 import { listRecords, type AarRecord } from "@/lib/aar-store";
 
+// Pipeline order, earliest to latest — mirrors how a review actually moves
+// through /new (Drafting -> surveys -> review -> validation).
+const STAGE_ORDER: ReviewStage[] = [
+  "Drafting",
+  "Awaiting Survey Responses",
+  "In Review",
+  "Validation",
+];
+
 export default function LibraryPage() {
   const [query, setQuery] = useState("");
-  const [activeCrisisType, setActiveCrisisType] = useState<string>("All");
+  const [activeStage, setActiveStage] = useState<ReviewStage | "All">("All");
   const [records, setRecords] = useState<AarRecord[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -34,17 +42,15 @@ export default function LibraryPage() {
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
     return records.filter((review) => {
-      const matchesQuery =
+      return (
         q.length === 0 ||
         review.title.toLowerCase().includes(q) ||
         review.country.toLowerCase().includes(q) ||
         review.summary.toLowerCase().includes(q) ||
-        review.tags.some((tag) => tag.toLowerCase().includes(q));
-      const matchesCrisisType =
-        activeCrisisType === "All" || review.crisisType === activeCrisisType;
-      return matchesQuery && matchesCrisisType;
+        review.tags.some((tag) => tag.toLowerCase().includes(q))
+      );
     });
-  }, [records, query, activeCrisisType]);
+  }, [records, query]);
 
   const completed = matches
     .filter((r) => r.status === "Completed")
@@ -52,6 +58,9 @@ export default function LibraryPage() {
 
   const inProgress = matches
     .filter((r) => r.status === "In Progress")
+    .filter(
+      (r) => activeStage === "All" || (r.stage ?? "Drafting") === activeStage,
+    )
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 
   const completedByYear = useMemo(() => {
@@ -62,6 +71,17 @@ export default function LibraryPage() {
     }
     return [...groups.entries()].sort((a, b) => b[0] - a[0]);
   }, [completed]);
+
+  const inProgressByStage = useMemo(() => {
+    const groups = new Map<ReviewStage, typeof inProgress>();
+    for (const review of inProgress) {
+      const stage = review.stage ?? "Drafting";
+      groups.set(stage, [...(groups.get(stage) ?? []), review]);
+    }
+    return STAGE_ORDER.filter((s) => groups.has(s)).map(
+      (s) => [s, groups.get(s)!] as const,
+    );
+  }, [inProgress]);
 
   const counts = {
     total: records.length,
@@ -125,16 +145,16 @@ export default function LibraryPage() {
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 pt-8">
         <div className="flex flex-wrap gap-2">
           <FilterChip
-            label="All crisis types"
-            active={activeCrisisType === "All"}
-            onClick={() => setActiveCrisisType("All")}
+            label="All statuses"
+            active={activeStage === "All"}
+            onClick={() => setActiveStage("All")}
           />
-          {crisisTypes.map((type) => (
+          {STAGE_ORDER.map((stage) => (
             <FilterChip
-              key={type}
-              label={type}
-              active={activeCrisisType === type}
-              onClick={() => setActiveCrisisType(type)}
+              key={stage}
+              label={stage}
+              active={activeStage === stage}
+              onClick={() => setActiveStage(stage)}
             />
           ))}
         </div>
@@ -161,42 +181,51 @@ export default function LibraryPage() {
             Section 1 &middot; In-Progress AARs
           </h2>
           <span className="text-sm text-un-muted">
-            Being drafted, reviewed, or validated &mdash; click one to
-            continue editing
+            Grouped by stage, most recently updated first &mdash; click one
+            to continue editing
           </span>
         </div>
 
         {loading ? (
           <EmptyState message="Loading..." />
-        ) : inProgress.length > 0 ? (
-          <ul className="mt-6 divide-y divide-un-border overflow-hidden rounded-2xl border border-un-border bg-un-surface shadow-sm">
-            {inProgress.map((review) => (
-              <li key={review.slug}>
-                <Link
-                  href={`/new?edit=${encodeURIComponent(review.slug)}`}
-                  className="flex flex-col gap-2 px-5 py-4 transition-colors hover:bg-un-blue-50/60 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
-                >
-                  <div className="min-w-0">
-                    <div className="flex items-center gap-2">
-                      <span className="text-xs font-semibold uppercase tracking-wide text-un-blue-600">
-                        {review.crisisType}
-                      </span>
-                      <StageBadge stage={review.stage ?? "Drafting"} />
-                    </div>
-                    <p className="mt-1 font-serif text-base font-semibold text-un-ink">
-                      {review.title}
-                    </p>
-                    <p className="mt-0.5 truncate text-sm text-un-muted">
-                      {review.office}
-                    </p>
-                  </div>
-                  <span className="shrink-0 text-sm text-un-muted">
-                    {formatPeriod(review.periodStart, review.periodEnd)}
+        ) : inProgressByStage.length > 0 ? (
+          <div className="mt-6 space-y-8">
+            {inProgressByStage.map(([stage, stageReviews]) => (
+              <div key={stage}>
+                <div className="flex items-center gap-2 border-b border-un-border pb-2">
+                  <StageBadge stage={stage} />
+                  <span className="text-sm text-un-muted">
+                    ({stageReviews.length})
                   </span>
-                </Link>
-              </li>
+                </div>
+                <ul className="mt-3 divide-y divide-un-border overflow-hidden rounded-2xl border border-un-border bg-un-surface shadow-sm">
+                  {stageReviews.map((review) => (
+                    <li key={review.slug}>
+                      <Link
+                        href={`/new?edit=${encodeURIComponent(review.slug)}`}
+                        className="flex flex-col gap-2 px-5 py-4 transition-colors hover:bg-un-blue-50/60 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
+                      >
+                        <div className="min-w-0">
+                          <span className="text-xs font-semibold uppercase tracking-wide text-un-blue-600">
+                            {review.crisisType}
+                          </span>
+                          <p className="mt-1 font-serif text-base font-semibold text-un-ink">
+                            {review.title}
+                          </p>
+                          <p className="mt-0.5 truncate text-sm text-un-muted">
+                            {review.office}
+                          </p>
+                        </div>
+                        <span className="shrink-0 text-sm text-un-muted">
+                          {formatPeriod(review.periodStart, review.periodEnd)}
+                        </span>
+                      </Link>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
+          </div>
         ) : (
           <EmptyState message="No in-progress reviews match your filters right now." />
         )}
