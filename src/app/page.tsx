@@ -73,6 +73,38 @@ export default function LibraryPage() {
     return [...groups.entries()].sort((a, b) => b[0] - a[0]);
   }, [completed]);
 
+  const archiveGroups = useMemo(
+    () =>
+      Array.from(
+        archivedAars.reduce((groups, doc) => {
+          const bucket = groups.get(Number(doc.year)) ?? [];
+          bucket.push(doc);
+          groups.set(Number(doc.year), bucket);
+          return groups;
+        }, new Map<number, typeof archivedAars>()),
+      ).sort((a, b) => b[0] - a[0]),
+    [],
+  );
+
+  const mergedCompletedByYear = useMemo(() => {
+    const groups = new Map<
+      number,
+      { reviews: typeof completed; archive: typeof archivedAars }
+    >();
+
+    for (const [year, yearReviews] of completedByYear) {
+      groups.set(year, { reviews: yearReviews, archive: [] });
+    }
+
+    for (const [year, docs] of archiveGroups) {
+      const current = groups.get(year) ?? { reviews: [], archive: [] };
+      current.archive = [...current.archive, ...docs];
+      groups.set(year, current);
+    }
+
+    return [...groups.entries()].sort((a, b) => b[0] - a[0]);
+  }, [archiveGroups, completedByYear]);
+
   const inProgressByStage = useMemo(() => {
     const groups = new Map<ReviewStage, typeof inProgress>();
     for (const review of inProgress) {
@@ -85,9 +117,9 @@ export default function LibraryPage() {
   }, [inProgress]);
 
   const counts = {
-    total: records.length,
-    completed: records.filter((r) => r.status === "Completed").length,
-    inProgress: records.filter((r) => r.status === "In Progress").length,
+    total: matches.length,
+    completed: completed.length,
+    inProgress: inProgress.length,
   };
 
   return (
@@ -127,12 +159,22 @@ export default function LibraryPage() {
                 className="w-full rounded-full border-0 bg-white py-3 pl-11 pr-4 text-sm text-un-ink placeholder:text-un-muted shadow-lg focus:outline-none focus:ring-2 focus:ring-un-blue-400"
               />
             </div>
-            <Link
-              href="/new"
-              className="inline-flex items-center justify-center gap-2 rounded-full bg-un-gold-500 px-6 py-3 text-sm font-semibold text-un-blue-950 shadow-lg transition-colors hover:bg-un-gold-600"
-            >
-              + Start a new AAR
-            </Link>
+            <div className="flex gap-3">
+              <Link
+                href="/new"
+                className="inline-flex items-center justify-center gap-2 rounded-full bg-un-gold-500 px-6 py-3 text-sm font-semibold text-un-blue-950 shadow-lg transition-colors hover:bg-un-gold-600"
+              >
+                + Start a new AAR
+              </Link>
+              <a
+                href="https://undp.sharepoint.com/teams/SURGEPortal/SURGE%20Planning%20Quick%20Links/Forms/AllItems.aspx?csf=1&web=1&e=A1ouIX&FolderCTID=0x0120006C37C0AF60177C4E998CDF472C146D6B&id=%2Fteams%2FSURGEPortal%2FSURGE%20Planning%20Quick%20Links%2FCrisis%20Response%20After%20Action%20Reviews%20%28AARs%29"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 rounded-full border-2 border-white px-6 py-3 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-white/10"
+              >
+                SURGE Portal
+              </a>
+            </div>
           </div>
 
           <dl className="mt-10 grid grid-cols-3 gap-4 max-w-xl">
@@ -232,37 +274,6 @@ export default function LibraryPage() {
         )}
       </section>
 
-      <section className="border-t border-un-border bg-white">
-        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="font-serif text-2xl font-semibold text-un-ink">
-              Historical archive preview
-            </h2>
-            <span className="text-sm text-un-muted">
-              Click any document to open the original file.
-            </span>
-          </div>
-          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {archivedAars.map((doc) => (
-              <a
-                key={doc.href}
-                href={doc.href}
-                target="_blank"
-                rel="noreferrer"
-                className="rounded-xl border border-un-border bg-un-surface p-3 text-sm text-un-ink shadow-sm transition-colors hover:border-un-blue-400 hover:bg-un-blue-50"
-              >
-                <span className="block text-[0.7rem] font-semibold uppercase tracking-wide text-un-blue-600">
-                  Archived AAR
-                </span>
-                <span className="mt-2 block font-medium leading-snug">
-                  {doc.name}
-                </span>
-              </a>
-            ))}
-          </div>
-        </div>
-      </section>
-
       <section id="completed" className="border-t border-un-border bg-un-blue-50/40">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10 scroll-mt-20">
           <div className="flex items-baseline justify-between gap-3">
@@ -270,30 +281,48 @@ export default function LibraryPage() {
               Section 2 &middot; Completed AARs
             </h2>
             <span className="text-sm text-un-muted">
-              Organized by year &middot; published to the library or linked
-              from SharePoint
+              Organized by year &middot; published to the library, linked
+              from SharePoint, and archived by folder date
             </span>
           </div>
 
           {loading ? (
             <EmptyState message="Loading..." />
-          ) : completedByYear.length > 0 ? (
-            <div className="mt-6 space-y-10">
-              {completedByYear.map(([year, yearReviews]) => (
-                <div key={year}>
-                  <h3 className="font-serif text-lg font-semibold text-un-blue-800 border-b border-un-border pb-2">
-                    {year}
-                  </h3>
-                  <div className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-                    {yearReviews.map((review) => (
-                      <ReviewCard key={review.slug} review={review} />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </div>
           ) : (
-            <EmptyState message="No completed reviews match your filters yet." />
+            <div className="mt-6 space-y-10">
+              {mergedCompletedByYear.length > 0 ? (
+                mergedCompletedByYear.map(([year, { reviews, archive }]) => (
+                  <div key={year}>
+                    <h3 className="font-serif text-lg font-semibold text-un-blue-800 border-b border-un-border pb-2">
+                      {year}
+                    </h3>
+                    <div className="mt-4 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+                      {archive.map((doc) => (
+                        <a
+                          key={doc.href}
+                          href={doc.href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="rounded-2xl border border-un-border bg-white p-4 shadow-sm transition-all hover:-translate-y-0.5 hover:shadow-md hover:border-un-blue-400"
+                        >
+                          <span className="text-[0.7rem] font-semibold uppercase tracking-wide text-un-blue-600">
+                            Archived AAR
+                          </span>
+                          <p className="mt-2 text-sm font-medium leading-snug text-un-ink">
+                            {doc.name}
+                          </p>
+                        </a>
+                      ))}
+                      {reviews.map((review) => (
+                        <ReviewCard key={review.slug} review={review} />
+                      ))}
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <EmptyState message="No completed reviews match your filters yet." />
+              )}
+            </div>
           )}
         </div>
       </section>
