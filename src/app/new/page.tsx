@@ -249,6 +249,8 @@ function NewReviewWorkspace() {
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [findingsMatrix, setFindingsMatrix] = useState<FindingRow[]>([]);
   const [interviewees, setInterviewees] = useState<Interviewee[]>([]);
+  const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
+  const [isSaving, setIsSaving] = useState(false);
 
   // One-time hydration from an external source (the URL and the database)
   // on mount — not state derived from props/state, so setState here is the
@@ -329,8 +331,47 @@ function NewReviewWorkspace() {
   // reload) whenever the current record's slug is known.
   useEffect(() => {
     if (!slug) return;
-    listInvites(slug).then(setInvites);
+    listInvites(slug).then((loaded) => {
+      setInvites(loaded);
+      // Auto-advance stage if all responses received
+      if (
+        overview.stage === "Awaiting Survey Responses" &&
+        loaded.length > 0 &&
+        loaded.every((i) => i.status === "Responded")
+      ) {
+        const updatedOverview: OverviewState = {
+          ...overview,
+          stage: "Drafting",
+        };
+        setOverview(updatedOverview);
+        saveRecord({
+          ...buildRecord({ overview: updatedOverview }),
+          stage: "Drafting",
+        }).catch(() => {
+          // silently fail to avoid disrupting the form
+        });
+      }
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
+
+  // Auto-save the record when changes are made
+  useEffect(() => {
+    if (!slug) return;
+    
+    const saveTimer = setTimeout(() => {
+      setIsSaving(true);
+      saveRecord(buildRecord()).then(() => {
+        setLastSaveTime(new Date());
+        setIsSaving(false);
+      }).catch(() => {
+        setIsSaving(false);
+      });
+    }, 2000); // Auto-save 2 seconds after last change
+    
+    return () => clearTimeout(saveTimer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slug, overview, documents, methods, notes, draft, timeline, findingsMatrix, interviewees, recordStatus, tags]);
 
   const isOtherCrisisType = !(crisisTypes as readonly string[]).includes(
     overview.crisisType,
@@ -400,7 +441,19 @@ function NewReviewWorkspace() {
   async function addInvite() {
     if (!inviteForm.name.trim() || !inviteForm.email.trim() || !slug) return;
     const created = await createInvite({ reviewSlug: slug, ...inviteForm });
-    if (created) setInvites((prev) => [...prev, created]);
+    if (created) {
+      setInvites((prev) => [...prev, created]);
+      
+      // Auto-advance to "Awaiting Survey Responses" if still in Drafting stage
+      if (overview.stage === "Drafting") {
+        const updatedOverview: OverviewState = {
+          ...overview,
+          stage: "Awaiting Survey Responses",
+        };
+        setOverview(updatedOverview);
+        await saveRecord(buildRecord({ overview: updatedOverview }));
+      }
+    }
     setInviteForm((f) => ({ ...EMPTY_INVITE_FORM, templateId: f.templateId }));
   }
 
@@ -513,7 +566,7 @@ function NewReviewWorkspace() {
 
   async function handleSubmitForReview() {
     if (!slug) return;
-    const updatedOverview: OverviewState = { ...overview, stage: "In Review" };
+    const updatedOverview: OverviewState = { ...overview, stage: "Drafting" };
     setOverview(updatedOverview);
     await saveRecord(buildRecord({ overview: updatedOverview }));
     router.push("/");
@@ -671,7 +724,15 @@ function NewReviewWorkspace() {
               format.
             </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex gap-2 items-center">
+            {isSaving && (
+              <span className="text-xs font-medium text-un-muted">Saving...</span>
+            )}
+            {lastSaveTime && !isSaving && (
+              <span className="text-xs font-medium text-emerald-600">
+                ✓ Saved
+              </span>
+            )}
             <button
               type="button"
               onClick={handleSaveAsDraft}
@@ -888,14 +949,38 @@ function NewReviewWorkspace() {
         {step === 2 && (
           <div className="mx-auto mt-8 max-w-6xl space-y-5">
           {overview.stage === "Awaiting Survey Responses" && (
-            <div className="flex items-center justify-between gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
-              <span>
-                <strong>Waiting for survey responses.</strong>{" "}
-                {invites.filter((i) => i.status === "Responded").length} of{" "}
-                {invites.length} contributors have responded so far. Mark
-                responses in as they come in, then continue when
-                you&apos;re ready.
-              </span>
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-3 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
+                <span>
+                  <strong>Waiting for survey responses.</strong>{" "}
+                  {invites.length > 0 ? (
+                    <>
+                      {invites.filter((i) => i.status === "Responded").length} of{" "}
+                      {invites.length} contributors have responded so far. Mark
+                      responses in as they come in, then continue when
+                      you&apos;re ready.
+                    </>
+                  ) : (
+                    <>Send surveys to get started.</>
+                  )}
+                </span>
+              </div>
+              {invites.length > 0 && (
+                <div className="rounded-xl border border-un-border bg-white px-4 py-3">
+                  <div className="mb-2 flex items-center justify-between text-xs font-semibold text-un-ink">
+                    <span>Survey Response Progress</span>
+                    <span className="text-un-muted">{invites.filter((i) => i.status === "Responded").length} of {invites.length}</span>
+                  </div>
+                  <div className="h-2 w-full overflow-hidden rounded-full bg-un-border">
+                    <div
+                      className="h-full bg-emerald-500 transition-all duration-300"
+                      style={{
+                        width: `${(invites.filter((i) => i.status === "Responded").length / invites.length) * 100}%`,
+                      }}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           )}
           <div className="grid gap-5 lg:grid-cols-[360px_1fr] lg:items-start">

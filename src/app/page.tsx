@@ -10,14 +10,13 @@ import {
 import ReviewCard from "@/components/review-card";
 import { archivedAars } from "@/data/archive-documents";
 import { formatPeriod } from "@/lib/format";
-import { listRecords, type AarRecord } from "@/lib/aar-store";
+import { listRecords, listInvites, type AarRecord, type SurveyInvite } from "@/lib/aar-store";
 
 // Pipeline order, earliest to latest — mirrors how a review actually moves
-// through /new (Drafting -> surveys -> review -> validation).
+// through /new (surveys -> drafting -> validation).
 const STAGE_ORDER: ReviewStage[] = [
-  "Drafting",
   "Awaiting Survey Responses",
-  "In Review",
+  "Drafting",
   "Validation",
 ];
 
@@ -26,6 +25,9 @@ export default function LibraryPage() {
   const [activeStage, setActiveStage] = useState<ReviewStage | "All">("All");
   const [records, setRecords] = useState<AarRecord[]>([]);
   const [loading, setLoading] = useState(true);
+  const [deletingSlug, setDeletingSlug] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const [invitesByReview, setInvitesByReview] = useState<Record<string, SurveyInvite[]>>({})
 
   useEffect(() => {
     let cancelled = false;
@@ -33,12 +35,49 @@ export default function LibraryPage() {
       if (!cancelled) {
         setRecords(data);
         setLoading(false);
+        
+        // Load invites for records awaiting survey responses
+        const awaitingRecords = data.filter((r) => r.stage === "Awaiting Survey Responses");
+        Promise.all(
+          awaitingRecords.map(async (record) => {
+            const invites = await listInvites(record.slug);
+            return { slug: record.slug, invites };
+          })
+        ).then((results) => {
+          if (!cancelled) {
+            const invitesMap: Record<string, SurveyInvite[]> = {};
+            results.forEach(({ slug, invites }) => {
+              invitesMap[slug] = invites;
+            });
+            setInvitesByReview(invitesMap);
+          }
+        });
       }
     });
     return () => {
       cancelled = true;
     };
   }, []);
+
+  const handleDelete = async (slug: string, title: string) => {
+    if (deleteConfirm !== slug) {
+      setDeleteConfirm(slug);
+      return;
+    }
+
+    setDeletingSlug(slug);
+    try {
+      const response = await fetch(`/api/reviews/${encodeURIComponent(slug)}`, {
+        method: "DELETE",
+      });
+      if (response.ok) {
+        setRecords((prev) => prev.filter((r) => r.slug !== slug));
+        setDeleteConfirm(null);
+      }
+    } finally {
+      setDeletingSlug(null);
+    }
+  };
 
   const matches = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -166,14 +205,6 @@ export default function LibraryPage() {
               >
                 + Start a new AAR
               </Link>
-              <a
-                href="https://undp.sharepoint.com/teams/SURGEPortal/SURGE%20Planning%20Quick%20Links/Forms/AllItems.aspx?csf=1&web=1&e=A1ouIX&FolderCTID=0x0120006C37C0AF60177C4E998CDF472C146D6B&id=%2Fteams%2FSURGEPortal%2FSURGE%20Planning%20Quick%20Links%2FCrisis%20Response%20After%20Action%20Reviews%20%28AARs%29"
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center justify-center gap-2 rounded-full border-2 border-white px-6 py-3 text-sm font-semibold text-white shadow-lg transition-colors hover:bg-white/10"
-              >
-                SURGE Portal
-              </a>
             </div>
           </div>
 
@@ -223,10 +254,6 @@ export default function LibraryPage() {
           <h2 className="font-serif text-2xl font-semibold text-un-ink">
             Section 1 &middot; In-Progress AARs
           </h2>
-          <span className="text-sm text-un-muted">
-            Grouped by stage, most recently updated first &mdash; click one
-            to continue editing
-          </span>
         </div>
 
         {loading ? (
@@ -244,11 +271,11 @@ export default function LibraryPage() {
                 <ul className="mt-3 divide-y divide-un-border overflow-hidden rounded-2xl border border-un-border bg-un-surface shadow-sm">
                   {stageReviews.map((review) => (
                     <li key={review.slug}>
-                      <Link
-                        href={`/new?edit=${encodeURIComponent(review.slug)}`}
-                        className="flex flex-col gap-2 px-5 py-4 transition-colors hover:bg-un-blue-50/60 sm:flex-row sm:items-center sm:justify-between sm:gap-4"
-                      >
-                        <div className="min-w-0">
+                      <div className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 group hover:bg-un-blue-50/60 transition-colors">
+                        <Link
+                          href={`/new?edit=${encodeURIComponent(review.slug)}`}
+                          className="flex flex-col gap-2 min-w-0 flex-1"
+                        >
                           <span className="text-xs font-semibold uppercase tracking-wide text-un-blue-600">
                             {review.crisisType}
                           </span>
@@ -258,11 +285,59 @@ export default function LibraryPage() {
                           <p className="mt-0.5 truncate text-sm text-un-muted">
                             {review.office}
                           </p>
+                          {review.stage === "Awaiting Survey Responses" && invitesByReview[review.slug] && (
+                            <div className="mt-2 space-y-1">
+                              <div className="flex items-center justify-between text-xs font-semibold text-un-ink">
+                                <span>Survey Response Progress</span>
+                                <span className="text-un-muted">
+                                  {invitesByReview[review.slug].filter((i) => i.status === "Responded").length} of {invitesByReview[review.slug].length}
+                                </span>
+                              </div>
+                              <div className="h-1.5 w-full overflow-hidden rounded-full bg-un-border">
+                                <div
+                                  className="h-full bg-emerald-500 transition-all duration-300"
+                                  style={{
+                                    width: `${(invitesByReview[review.slug].filter((i) => i.status === "Responded").length / invitesByReview[review.slug].length) * 100}%`,
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          )}
+                        </Link>
+                        <div className="flex items-center gap-3 shrink-0">
+                          <span className="text-sm text-un-muted">
+                            {formatPeriod(review.periodStart, review.periodEnd)}
+                          </span>
+                          {deleteConfirm === review.slug ? (
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() =>
+                                  handleDelete(review.slug, review.title)
+                                }
+                                disabled={deletingSlug === review.slug}
+                                className="px-3 py-1 text-xs font-medium rounded bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                              >
+                                {deletingSlug === review.slug ? "..." : "Confirm"}
+                              </button>
+                              <button
+                                onClick={() => setDeleteConfirm(null)}
+                                className="px-3 py-1 text-xs font-medium rounded border border-un-border hover:bg-un-blue-50"
+                              >
+                                Cancel
+                              </button>
+                            </div>
+                          ) : (
+                            <button
+                              onClick={() =>
+                                handleDelete(review.slug, review.title)
+                              }
+                              className="px-3 py-1 text-xs font-medium rounded border border-un-border text-un-muted hover:text-red-600 hover:border-red-600 opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              Delete
+                            </button>
+                          )}
                         </div>
-                        <span className="shrink-0 text-sm text-un-muted">
-                          {formatPeriod(review.periodStart, review.periodEnd)}
-                        </span>
-                      </Link>
+                      </div>
                     </li>
                   ))}
                 </ul>
@@ -276,14 +351,20 @@ export default function LibraryPage() {
 
       <section id="completed" className="border-t border-un-border bg-un-blue-50/40">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10 scroll-mt-20">
-          <div className="flex items-baseline justify-between gap-3">
-            <h2 className="font-serif text-2xl font-semibold text-un-ink">
-              Section 2 &middot; Completed AARs
-            </h2>
-            <span className="text-sm text-un-muted">
-              Organized by year &middot; published to the library, linked
-              from SharePoint, and archived by folder date
-            </span>
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center gap-4">
+              <h2 className="font-serif text-2xl font-semibold text-un-ink">
+                Section 2 &middot; Completed AARs
+              </h2>
+              <a
+                href="https://undp.sharepoint.com/teams/SURGEPortal/SURGE%20Planning%20Quick%20Links/Forms/AllItems.aspx?csf=1&web=1&e=A1ouIX&FolderCTID=0x0120006C37C0AF60177C4E998CDF472C146D6B&id=%2Fteams%2FSURGEPortal%2FSURGE%20Planning%20Quick%20Links%2FCrisis%20Response%20After%20Action%20Reviews%20%28AARs%29"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center justify-center gap-2 rounded-full border-2 border-un-border px-4 py-2 text-xs font-semibold text-un-blue-700 hover:border-un-blue-600 hover:text-un-blue-600 transition-colors"
+              >
+                SURGE Portal
+              </a>
+            </div>
           </div>
 
           {loading ? (

@@ -5,9 +5,8 @@
 
 export type ReviewStatus = "Completed" | "In Progress";
 export type ReviewStage =
-  | "Drafting"
   | "Awaiting Survey Responses"
-  | "In Review"
+  | "Drafting"
   | "Validation";
 export type PriorityLevel = "Very High" | "High" | "Medium" | "Low";
 
@@ -730,7 +729,7 @@ export const reviews: Review[] = [
     summary:
       "Draft findings on the highlands earthquake response are complete and currently with the Country Office for review ahead of validation.",
     status: "In Progress",
-    stage: "In Review",
+    stage: "Drafting",
     periodStart: "2026-02",
     periodEnd: "2026-05",
     office: "Papua New Guinea Country Office",
@@ -844,10 +843,6 @@ export const statusStyles: Record<
   "Awaiting Survey Responses": {
     badge: "bg-orange-50 text-orange-700 ring-1 ring-orange-200",
     dot: "bg-orange-500",
-  },
-  "In Review": {
-    badge: "bg-un-gold-100 text-un-gold-600 ring-1 ring-un-gold-500/30",
-    dot: "bg-un-gold-500",
   },
   Validation: {
     badge: "bg-un-blue-50 text-un-blue-700 ring-1 ring-un-blue-200",
