@@ -8,6 +8,7 @@ import {
   type ReviewStage,
 } from "@/data/reviews";
 import ReviewCard from "@/components/review-card";
+import { archivedAars } from "@/data/archive-documents";
 import { formatPeriod } from "@/lib/format";
 import { listRecords, type AarRecord } from "@/lib/aar-store";
 
@@ -229,6 +230,37 @@ export default function LibraryPage() {
         ) : (
           <EmptyState message="No in-progress reviews match your filters right now." />
         )}
+      </section>
+
+      <section className="border-t border-un-border bg-white">
+        <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10">
+          <div className="flex items-baseline justify-between gap-3">
+            <h2 className="font-serif text-2xl font-semibold text-un-ink">
+              Historical archive preview
+            </h2>
+            <span className="text-sm text-un-muted">
+              Click any document to open the original file.
+            </span>
+          </div>
+          <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {archivedAars.map((doc) => (
+              <a
+                key={doc.href}
+                href={doc.href}
+                target="_blank"
+                rel="noreferrer"
+                className="rounded-xl border border-un-border bg-un-surface p-3 text-sm text-un-ink shadow-sm transition-colors hover:border-un-blue-400 hover:bg-un-blue-50"
+              >
+                <span className="block text-[0.7rem] font-semibold uppercase tracking-wide text-un-blue-600">
+                  Archived AAR
+                </span>
+                <span className="mt-2 block font-medium leading-snug">
+                  {doc.name}
+                </span>
+              </a>
+            ))}
+          </div>
+        </div>
       </section>
 
       <section id="completed" className="border-t border-un-border bg-un-blue-50/40">

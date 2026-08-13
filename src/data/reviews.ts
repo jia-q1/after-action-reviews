@@ -18,7 +18,9 @@ export const crisisTypes = [
   "Complex Emergency",
 ] as const;
 
-export type CrisisType = (typeof crisisTypes)[number];
+// Widened beyond the preset list so "Other" can carry a custom, free-typed
+// value while the fixed options still autocomplete in editors.
+export type CrisisType = (typeof crisisTypes)[number] | (string & {});
 
 // The response areas named throughout the template (Executive Summary and
 // Annex 7 matrix both organize around this same list).
@@ -178,6 +180,9 @@ export type Review = {
   slug: string;
   country: string;
   crisisType: CrisisType;
+  countryOfficeFocalPoint?: string;
+  crisisBureauFocalPoint?: string;
+  regionalBureauFocalPoint?: string;
   title: string;
   summary: string;
   status: ReviewStatus;

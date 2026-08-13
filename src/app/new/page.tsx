@@ -12,7 +12,6 @@ import {
   type Interviewee,
   type PriorityLevel,
   type ResponseArea,
-  type ReviewStage,
   type ReviewStatus,
   type TimelineEntry,
 } from "@/data/reviews";
@@ -47,6 +46,9 @@ Read the attached source documents and any notes provided, and extract the relev
 const EMPTY_OVERVIEW: OverviewState = {
   country: "",
   crisisType: crisisTypes[0],
+  countryOfficeFocalPoint: "",
+  crisisBureauFocalPoint: "",
+  regionalBureauFocalPoint: "",
   periodStart: "",
   periodEnd: "",
   office: "",
@@ -268,6 +270,9 @@ function NewReviewWorkspace() {
         setOverview({
           country: record.country,
           crisisType: record.crisisType,
+          countryOfficeFocalPoint: record.countryOfficeFocalPoint ?? "",
+          crisisBureauFocalPoint: record.crisisBureauFocalPoint ?? "",
+          regionalBureauFocalPoint: record.regionalBureauFocalPoint ?? "",
           periodStart: record.periodStart,
           periodEnd: record.periodEnd,
           office: record.office,
@@ -326,6 +331,10 @@ function NewReviewWorkspace() {
     if (!slug) return;
     listInvites(slug).then(setInvites);
   }, [slug]);
+
+  const isOtherCrisisType = !(crisisTypes as readonly string[]).includes(
+    overview.crisisType,
+  );
 
   const keyFindings = useMemo(
     () => findingsMatrix.map((r) => r.finding).filter(Boolean),
@@ -438,6 +447,9 @@ function NewReviewWorkspace() {
       slug,
       country: ov.country,
       crisisType: ov.crisisType,
+      countryOfficeFocalPoint: ov.countryOfficeFocalPoint,
+      crisisBureauFocalPoint: ov.crisisBureauFocalPoint,
+      regionalBureauFocalPoint: ov.regionalBureauFocalPoint,
       title:
         savedTitle ||
         (ov.country ? `${ov.country} — ${ov.crisisType}` : "Untitled AAR"),
@@ -694,14 +706,58 @@ function NewReviewWorkspace() {
                     className="input"
                   />
                 </Field>
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="Crisis type">
-                    <select
-                      value={overview.crisisType}
+                <div className="space-y-3">
+                  <Field label="Country office focal point">
+                    <input
+                      value={overview.countryOfficeFocalPoint}
                       onChange={(e) =>
                         setOverview((o) => ({
                           ...o,
-                          crisisType: e.target.value as CrisisType,
+                          countryOfficeFocalPoint: e.target.value,
+                        }))
+                      }
+                      placeholder="e.g. Maria Santos"
+                      className="input"
+                    />
+                  </Field>
+                  <Field label="Crisis bureau focal point">
+                    <input
+                      value={overview.crisisBureauFocalPoint}
+                      onChange={(e) =>
+                        setOverview((o) => ({
+                          ...o,
+                          crisisBureauFocalPoint: e.target.value,
+                        }))
+                      }
+                      placeholder="e.g. Jonas Weber"
+                      className="input"
+                    />
+                  </Field>
+                  <Field label="Regional bureau focal point">
+                    <input
+                      value={overview.regionalBureauFocalPoint}
+                      onChange={(e) =>
+                        setOverview((o) => ({
+                          ...o,
+                          regionalBureauFocalPoint: e.target.value,
+                        }))
+                      }
+                      placeholder="e.g. Amara Okafor"
+                      className="input"
+                    />
+                  </Field>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Crisis category">
+                    <select
+                      value={isOtherCrisisType ? "Other" : overview.crisisType}
+                      onChange={(e) =>
+                        setOverview((o) => ({
+                          ...o,
+                          crisisType:
+                            e.target.value === "Other"
+                              ? ""
+                              : (e.target.value as CrisisType),
                         }))
                       }
                       className="input"
@@ -711,9 +767,24 @@ function NewReviewWorkspace() {
                           {c}
                         </option>
                       ))}
+                      <option value="Other">Other</option>
                     </select>
+                    {isOtherCrisisType && (
+                      <input
+                        value={overview.crisisType}
+                        onChange={(e) =>
+                          setOverview((o) => ({
+                            ...o,
+                            crisisType: e.target.value,
+                          }))
+                        }
+                        placeholder="Describe the crisis type"
+                        className="input mt-2"
+                        autoFocus
+                      />
+                    )}
                   </Field>
-                  <Field label="Period start">
+                  <Field label="Crisis response period start">
                     <input
                       type="month"
                       value={overview.periodStart}
@@ -730,7 +801,7 @@ function NewReviewWorkspace() {
 
                 {advancedOpen ? (
                   <div className="space-y-3 rounded-lg border border-un-border p-3">
-                    <Field label="Period end">
+                    <Field label="Crisis response period end">
                       <input
                         type="month"
                         value={overview.periodEnd}
@@ -743,23 +814,7 @@ function NewReviewWorkspace() {
                         className="input"
                       />
                     </Field>
-                    <Field label="Stage">
-                      <select
-                        value={overview.stage}
-                        onChange={(e) =>
-                          setOverview((o) => ({
-                            ...o,
-                            stage: e.target.value as ReviewStage,
-                          }))
-                        }
-                        className="input"
-                      >
-                        <option value="Drafting">Drafting</option>
-                        <option value="In Review">In Review</option>
-                        <option value="Validation">Validation</option>
-                      </select>
-                    </Field>
-                    <Field label="Responsible Country Office">
+                    <Field label="Responsible country office(s)">
                       <input
                         value={overview.office}
                         onChange={(e) =>
