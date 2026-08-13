@@ -156,9 +156,9 @@ export default function LibraryPage() {
   }, [inProgress]);
 
   const counts = {
-    total: matches.length,
-    completed: completed.length,
-    inProgress: inProgress.length,
+    total: records.length,
+    completed: records.filter((r) => r.status === "Completed").length,
+    inProgress: records.filter((r) => r.status === "In Progress").length,
   };
 
   return (
@@ -166,10 +166,10 @@ export default function LibraryPage() {
       <section className="border-b border-un-border bg-gradient-to-br from-un-blue-950 via-un-blue-900 to-un-blue-700 text-white">
         <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-14">
           <p className="text-xs font-semibold uppercase tracking-[0.2em] text-un-blue-400">
-            After Action Review Programme
+            United Nations
           </p>
           <h1 className="mt-3 font-serif text-3xl sm:text-4xl font-semibold max-w-2xl">
-            A shared library of lessons learned across every crisis response.
+            After Action Review Library
           </h1>
           <p className="mt-4 max-w-2xl text-un-blue-100 leading-relaxed">
             Browse completed After Action Reviews, or start a new one with
