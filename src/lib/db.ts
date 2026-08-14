@@ -208,6 +208,11 @@ export async function upsertRecord(record: AarRecord): Promise<AarRecord> {
 
 export async function deleteRecord(slug: string): Promise<void> {
   await ensureSchema();
+  // review_slug isn't a foreign key (see the comment above the invites
+  // section — a brand-new AAR can collect invites before it's ever been
+  // saved), so deleting the review doesn't cascade automatically. Clean up
+  // its invites explicitly instead of leaving them orphaned.
+  await sql`DELETE FROM survey_invites WHERE review_slug = ${slug}`;
   await sql`DELETE FROM reviews WHERE slug = ${slug}`;
 }
 
