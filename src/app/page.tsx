@@ -15,9 +15,9 @@ import { listRecords, listInvites, type AarRecord, type SurveyInvite } from "@/l
 // Pipeline order, earliest to latest — mirrors how a review actually moves
 // through /new (surveys -> drafting -> validation).
 const STAGE_ORDER: ReviewStage[] = [
-  "Awaiting Survey Responses",
   "Drafting",
-  "Validation",
+  "Awaiting Survey Responses",
+  "Under Review",
 ];
 
 export default function LibraryPage() {
@@ -273,7 +273,11 @@ export default function LibraryPage() {
                     <li key={review.slug}>
                       <div className="flex flex-col gap-2 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:gap-4 group hover:bg-un-blue-50/60 transition-colors">
                         <Link
-                          href={`/new?edit=${encodeURIComponent(review.slug)}`}
+                          href={
+                            review.stage === "Under Review"
+                              ? `/reviews/${encodeURIComponent(review.slug)}/edit`
+                              : `/new?edit=${encodeURIComponent(review.slug)}`
+                          }
                           className="flex flex-col gap-2 min-w-0 flex-1"
                         >
                           <span className="text-xs font-semibold uppercase tracking-wide text-un-blue-600">

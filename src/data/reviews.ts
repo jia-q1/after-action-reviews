@@ -7,7 +7,7 @@ export type ReviewStatus = "Completed" | "In Progress";
 export type ReviewStage =
   | "Awaiting Survey Responses"
   | "Drafting"
-  | "Validation";
+  | "Under Review";
 export type PriorityLevel = "Very High" | "High" | "Medium" | "Low";
 
 export const crisisTypes = [
@@ -190,7 +190,6 @@ export type Review = {
   periodEnd: string; // "YYYY-MM"
   office: string;
   leadAuthor: string;
-  sharepointUrl?: string;
   tags: string[];
 
   executiveSummary: string;
@@ -353,8 +352,6 @@ export const reviews: Review[] = [
     periodEnd: "2025-06",
     office: "Sudan Country Office / Regional Bureau for Africa",
     leadAuthor: "Regional Bureau for Africa AAR Team",
-    sharepointUrl:
-      "https://undp.sharepoint.com/sites/CrisisResponseUnit/AAR/Sudan-2025",
     tags: ["conflict", "displacement", "remote management"],
 
     executiveSummary:
@@ -844,9 +841,9 @@ export const statusStyles: Record<
     badge: "bg-orange-50 text-orange-700 ring-1 ring-orange-200",
     dot: "bg-orange-500",
   },
-  Validation: {
-    badge: "bg-un-blue-50 text-un-blue-700 ring-1 ring-un-blue-200",
-    dot: "bg-un-blue-600",
+  "Under Review": {
+    badge: "bg-violet-50 text-violet-700 ring-1 ring-violet-200",
+    dot: "bg-violet-500",
   },
 };
 

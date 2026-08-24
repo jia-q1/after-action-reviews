@@ -4,9 +4,6 @@ import StatusBadge from "@/components/status-badge";
 import { formatPeriod } from "@/lib/format";
 
 export default function ReviewCard({ review }: { review: Review }) {
-  const isCompleted = review.status === "Completed";
-  const externalLink = isCompleted ? review.sharepointUrl : undefined;
-
   return (
     <Link
       href={`/reviews/${review.slug}`}
@@ -33,12 +30,6 @@ export default function ReviewCard({ review }: { review: Review }) {
           {formatPeriod(review.periodStart, review.periodEnd)}
         </span>
       </div>
-
-      {externalLink && (
-        <span className="mt-2 inline-flex items-center gap-1 text-xs font-semibold text-un-blue-700">
-          Full report on SharePoint <span aria-hidden>&rarr;</span>
-        </span>
-      )}
     </Link>
   );
 }

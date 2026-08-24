@@ -16,7 +16,6 @@ export type AarOverview = {
   office: string;
   leadAuthor: string;
   stage: ReviewStage;
-  sharepointUrl: string;
 };
 
 // `content` is the raw file bytes, base64-encoded, so the eventual AI
@@ -28,6 +27,10 @@ export type DocumentSource = {
   size?: number;
   mimeType?: string;
   content?: string;
+  // How this specific piece of evidence was gathered (desk review, key
+  // informant interview, etc.) — a property of the document, not the AAR
+  // as a whole, since different sources are gathered different ways.
+  dataCollectionMethod?: string;
 };
 
 export type ReportDraft = {
@@ -55,6 +58,11 @@ export type ReportDraft = {
 export type AarRecord = Review & {
   documents: DocumentSource[];
   notes: string;
+  // The exact prompt text used for this AAR's draft — saved per-record
+  // (rather than always re-reading the current DEFAULT_PROMPT) so an
+  // AAR's generation instructions stay reproducible even if the default
+  // template is tuned later.
+  prompt: string;
   updatedAt: string;
 };
 

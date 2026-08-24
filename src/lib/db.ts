@@ -21,6 +21,7 @@ import type { DocumentSource } from "@/lib/aar-store";
 export type AarRecord = Review & {
   documents: DocumentSource[];
   notes: string;
+  prompt: string;
   updatedAt: string;
 };
 
@@ -111,6 +112,9 @@ async function ensureSchema(): Promise<void> {
             ...review,
             documents: [],
             notes: "",
+            // Empty means "use whatever DEFAULT_PROMPT the client currently
+            // has" — see the fallback in /new's hydration effect.
+            prompt: "",
             updatedAt: now,
           };
           await sql`

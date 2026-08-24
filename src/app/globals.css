@@ -53,3 +53,21 @@ body {
   color: var(--foreground);
   font-family: var(--font-sans), Arial, Helvetica, sans-serif;
 }
+
+/* Shared form control styling for every editable field across the app
+   (AAR wizard, the standalone review/edit page, etc.) — kept truly global
+   rather than scoped to one page, since it's reused everywhere. */
+.input {
+  width: 100%;
+  border-radius: 0.5rem;
+  border: 1px solid var(--un-border);
+  background: white;
+  padding: 0.55rem 0.75rem;
+  font-size: 0.875rem;
+  color: var(--un-ink);
+}
+.input:focus {
+  outline: none;
+  border-color: var(--un-blue-500);
+  box-shadow: 0 0 0 3px var(--un-blue-100);
+}

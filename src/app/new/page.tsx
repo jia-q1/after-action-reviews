@@ -1,16 +1,13 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import {
   crisisTypes,
   dataCollectionMethods,
-  priorityLevels,
-  responseAreas,
   type CrisisType,
   type FindingRow,
   type Interviewee,
-  type PriorityLevel,
   type ResponseArea,
   type ReviewStatus,
   type TimelineEntry,
@@ -31,17 +28,38 @@ import {
   type SurveyInvite,
   type SurveyTemplate,
 } from "@/lib/aar-store";
+import {
+  AccordionArtifact,
+  ArtifactField,
+  DocIcon,
+  Field,
+  IntervieweeField,
+  MatrixField,
+  MAX_FILE_BYTES,
+  Panel,
+  TimelineField,
+  UploadIcon,
+  formatBytes,
+  readFileAsBase64,
+} from "@/components/report-editor";
 
 const STEPS = [
   { id: 1, label: "AAR Basics" },
   { id: 2, label: "Send Surveys" },
-  { id: 3, label: "Sources & Draft" },
+  { id: 3, label: "Sources" },
+  { id: 4, label: "Draft" },
 ] as const;
 type Step = (typeof STEPS)[number]["id"];
 
-const DEFAULT_PROMPT = `You are drafting an After Action Review for the UNDP Crisis Response Unit, following the official AAR Final Report template.
+const DEFAULT_PROMPT = `You are an expert consultant specializing in After Action Reviews (AARs) for international development organizations, drafting a review for the UNDP Crisis Response Unit that follows the official AAR Final Report template.
 
-Read the attached source documents and any notes provided, and extract the relevant facts for each section. Write clear, professional, neutral prose suitable for an institutional record, and do not invent details that aren't supported by the sources. Where a section isn't covered yet, leave a clear note for the human reviewer instead of guessing. Findings and recommendations should stay as direct, actionable statements.`;
+Read and synthesize all attached source documents and any notes provided, and extract the relevant facts for each section. Distinguish between corporate/HQ-level and Country Office-level decisions and action where the sources support it, and build the timeline from documented events rather than impressions. Where the sources contain specific data points — funding amounts, dates, deployment details, gender marker scores — cite them directly instead of writing in general terms.
+
+Write clear, professional, neutral prose suitable for an institutional record, and do not invent details that aren't supported by the sources. Where a section isn't covered yet, leave a clear note for the human reviewer instead of guessing.
+
+Findings and recommendations should stay forward-looking and focused on institutional learning rather than assigning blame. Keep them as direct, actionable statements, and where the evidence makes it clear, name which part of the organization (e.g. Crisis Bureau, a Regional Bureau, the Country Office) is best placed to act on each recommendation.
+
+If a source document includes personal details about individuals or vulnerable groups, include only what's necessary to support a specific finding rather than restating identifying details that aren't relevant.`;
 
 const EMPTY_OVERVIEW: OverviewState = {
   country: "",
@@ -54,7 +72,6 @@ const EMPTY_OVERVIEW: OverviewState = {
   office: "",
   leadAuthor: "",
   stage: "Drafting",
-  sharepointUrl: "",
 };
 
 const EMPTY_INVITE_FORM = {
@@ -173,34 +190,6 @@ function toProse(points: string[]) {
     .join(" ");
 }
 
-// Keeps individual AAR records well under typical row/payload limits once
-// attached files are stored inline as base64.
-const MAX_FILE_BYTES = 15 * 1024 * 1024;
-
-function readFileAsBase64(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      resolve(result.slice(result.indexOf(",") + 1));
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
-function formatBytes(bytes?: number) {
-  if (!bytes) return "";
-  const units = ["B", "KB", "MB", "GB"];
-  let value = bytes;
-  let i = 0;
-  while (value >= 1024 && i < units.length - 1) {
-    value /= 1024;
-    i++;
-  }
-  return `${value < 10 && i > 0 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
-}
-
 export default function NewReviewPage() {
   return (
     <Suspense fallback={<main className="flex-1 bg-background" />}>
@@ -231,11 +220,11 @@ function NewReviewWorkspace() {
   const [inviteForm, setInviteForm] = useState(EMPTY_INVITE_FORM);
 
   const [documents, setDocuments] = useState<DocumentSource[]>([]);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [dragActive, setDragActive] = useState(false);
   const [manualSourceName, setManualSourceName] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
 
-  const [methods, setMethods] = useState<string[]>([]);
   const [notes, setNotes] = useState("");
 
   const [promptOpen, setPromptOpen] = useState(false);
@@ -264,6 +253,13 @@ function NewReviewWorkspace() {
           setSlug(crypto.randomUUID());
           return;
         }
+        // Once an AAR has been submitted for review (or completed), it's
+        // reviewed and edited on its own dedicated page, not this drafting
+        // wizard — bounce there even if someone lands on this URL directly.
+        if (record.stage === "Under Review" || record.status === "Completed") {
+          router.replace(`/reviews/${encodeURIComponent(record.slug)}/edit`);
+          return;
+        }
         setSlug(record.slug);
         setRecordStatus(record.status);
         setTags(record.tags);
@@ -280,11 +276,10 @@ function NewReviewWorkspace() {
           office: record.office,
           leadAuthor: record.leadAuthor,
           stage: record.stage ?? "Drafting",
-          sharepointUrl: record.sharepointUrl ?? "",
         });
         setDocuments(record.documents);
-        setMethods(record.methodology.dataCollectionMethods);
         setNotes(record.notes);
+        setPrompt(record.prompt || DEFAULT_PROMPT);
         setDraft({
           executiveSummary: record.executiveSummary,
           countrySituation: record.introduction.countrySituation,
@@ -306,8 +301,8 @@ function NewReviewWorkspace() {
         setInterviewees(record.interviewees);
 
         if (record.stage === "Awaiting Survey Responses") setStep(2);
-        else if (record.executiveSummary || record.documents.length > 0)
-          setStep(3);
+        else if (record.executiveSummary) setStep(4);
+        else if (record.documents.length > 0) setStep(3);
 
         if (record.executiveSummary) setStatus("ready");
       });
@@ -371,10 +366,20 @@ function NewReviewWorkspace() {
     
     return () => clearTimeout(saveTimer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug, overview, documents, methods, notes, draft, timeline, findingsMatrix, interviewees, recordStatus, tags]);
+  }, [slug, overview, documents, notes, draft, timeline, findingsMatrix, interviewees, recordStatus, tags]);
 
   const isOtherCrisisType = !(crisisTypes as readonly string[]).includes(
     overview.crisisType,
+  );
+
+  // Derived from each document's own tag rather than a single AAR-wide
+  // setting, since different sources are often gathered different ways.
+  const documentMethods = Array.from(
+    new Set(
+      documents
+        .map((d) => d.dataCollectionMethod)
+        .filter((m): m is string => Boolean(m)),
+    ),
   );
 
   const keyFindings = useMemo(
@@ -438,6 +443,14 @@ function NewReviewWorkspace() {
     setDocuments((prev) => prev.filter((d) => d.id !== id));
   }
 
+  function setDocumentMethod(id: string, method: string) {
+    setDocuments((prev) =>
+      prev.map((d) =>
+        d.id === id ? { ...d, dataCollectionMethod: method } : d,
+      ),
+    );
+  }
+
   async function addInvite() {
     if (!inviteForm.name.trim() || !inviteForm.email.trim() || !slug) return;
     const created = await createInvite({ reviewSlug: slug, ...inviteForm });
@@ -494,7 +507,10 @@ function NewReviewWorkspace() {
     });
   }
 
-  function buildRecord(opts?: { overview?: OverviewState }): AarRecord {
+  function buildRecord(opts?: {
+    overview?: OverviewState;
+    status?: ReviewStatus;
+  }): AarRecord {
     const ov = opts?.overview ?? overview;
     return {
       slug,
@@ -507,13 +523,12 @@ function NewReviewWorkspace() {
         savedTitle ||
         (ov.country ? `${ov.country} — ${ov.crisisType}` : "Untitled AAR"),
       summary: savedSummary || draft.executiveSummary.slice(0, 220),
-      status: recordStatus,
+      status: opts?.status ?? recordStatus,
       stage: ov.stage,
       periodStart: ov.periodStart,
       periodEnd: ov.periodEnd,
       office: ov.office,
       leadAuthor: ov.leadAuthor,
-      sharepointUrl: ov.sharepointUrl || undefined,
       tags,
       executiveSummary: draft.executiveSummary,
       introduction: {
@@ -522,7 +537,7 @@ function NewReviewWorkspace() {
       },
       methodology: {
         scope: draft.scope,
-        dataCollectionMethods: methods,
+        dataCollectionMethods: documentMethods,
         dataCollection: draft.dataCollection,
       },
       analysis: {
@@ -543,6 +558,7 @@ function NewReviewWorkspace() {
       interviewees,
       documents,
       notes,
+      prompt,
       updatedAt: new Date().toISOString(),
     };
   }
@@ -566,14 +582,25 @@ function NewReviewWorkspace() {
 
   async function handleSubmitForReview() {
     if (!slug) return;
-    const updatedOverview: OverviewState = { ...overview, stage: "Drafting" };
+    const updatedOverview: OverviewState = {
+      ...overview,
+      stage: "Under Review",
+    };
     setOverview(updatedOverview);
     await saveRecord(buildRecord({ overview: updatedOverview }));
     router.push("/");
   }
 
+  async function handleCompleteAar() {
+    if (!slug) return;
+    setRecordStatus("Completed");
+    await saveRecord(buildRecord({ status: "Completed" }));
+    router.push("/");
+  }
+
   function handleGenerate() {
     setStatus("generating");
+    setStep(4);
     window.setTimeout(() => {
       const points = splitToPoints(notes);
       const buckets: Partial<Record<keyof Draft, string[]>> = {};
@@ -618,7 +645,7 @@ function NewReviewWorkspace() {
               : `the attached sources (${docNames.join(", ")})`;
           return `Review ${sourceLabel} and summarize ${topic} here.`;
         }
-        return `Attach source documents or add notes on the left to generate ${topic}.`;
+        return `Attach source documents or add notes in the Sources step to generate ${topic}.`;
       }
 
       const period = formatPeriod(overview.periodStart, overview.periodEnd);
@@ -641,7 +668,7 @@ function NewReviewWorkspace() {
         );
       } else {
         summaryParts.push(
-          "Attach source documents on the left, or add notes, then regenerate to populate this draft.",
+          "Attach source documents or add notes in the Sources step, then regenerate to populate this draft.",
         );
       }
       summaryParts.push(
@@ -660,8 +687,8 @@ function NewReviewWorkspace() {
         ),
         scope: sectionText("scope", "the scope of this review"),
         dataCollection: [
-          methods.length > 0
-            ? `Evidence was gathered through ${methods.map((m) => m.toLowerCase()).join(", ")}.`
+          documentMethods.length > 0
+            ? `Evidence was gathered through ${documentMethods.map((m) => m.toLowerCase()).join(", ")}.`
             : "",
           sectionText(
             "dataCollection",
@@ -733,21 +760,55 @@ function NewReviewWorkspace() {
                 ✓ Saved
               </span>
             )}
-            <button
-              type="button"
-              onClick={handleSaveAsDraft}
-              className="rounded-full border border-un-border px-4 py-2 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
-            >
-              Save as draft
-            </button>
-            <button
-              type="button"
-              onClick={handleSubmitForReview}
-              disabled={status !== "ready"}
-              className="rounded-full bg-un-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-un-blue-700 disabled:cursor-not-allowed disabled:bg-un-border disabled:text-un-muted"
-            >
-              Submit for review
-            </button>
+            {recordStatus === "Completed" ? (
+              <>
+                <span className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-semibold text-emerald-700 ring-1 ring-emerald-200">
+                  ✓ Completed
+                </span>
+                <button
+                  type="button"
+                  onClick={handleSaveAsDraft}
+                  className="rounded-full border border-un-border px-4 py-2 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
+                >
+                  Save edits
+                </button>
+              </>
+            ) : overview.stage === "Under Review" ? (
+              <>
+                <button
+                  type="button"
+                  onClick={handleSaveAsDraft}
+                  className="rounded-full border border-un-border px-4 py-2 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
+                >
+                  Save edits
+                </button>
+                <button
+                  type="button"
+                  onClick={handleCompleteAar}
+                  className="rounded-full bg-un-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-un-blue-700"
+                >
+                  Complete AAR
+                </button>
+              </>
+            ) : (
+              <>
+                <button
+                  type="button"
+                  onClick={handleSaveAsDraft}
+                  className="rounded-full border border-un-border px-4 py-2 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
+                >
+                  Save as draft
+                </button>
+                <button
+                  type="button"
+                  onClick={handleSubmitForReview}
+                  disabled={status !== "ready"}
+                  className="rounded-full bg-un-blue-600 px-4 py-2 text-sm font-semibold text-white transition-colors hover:bg-un-blue-700 disabled:cursor-not-allowed disabled:bg-un-border disabled:text-un-muted"
+                >
+                  Submit for review
+                </button>
+              </>
+            )}
           </div>
         </div>
 
@@ -898,19 +959,6 @@ function NewReviewWorkspace() {
                           }))
                         }
                         placeholder="e.g. Independent Consultant — name"
-                        className="input"
-                      />
-                    </Field>
-                    <Field label="SharePoint link (optional)">
-                      <input
-                        value={overview.sharepointUrl}
-                        onChange={(e) =>
-                          setOverview((o) => ({
-                            ...o,
-                            sharepointUrl: e.target.value,
-                          }))
-                        }
-                        placeholder="Link to the full report or supporting annexes"
                         className="input"
                       />
                     </Field>
@@ -1301,7 +1349,7 @@ function NewReviewWorkspace() {
                   onClick={() => setStep(3)}
                   className="rounded-full bg-un-blue-600 px-5 py-2.5 text-sm font-semibold text-white transition-colors hover:bg-un-blue-700"
                 >
-                  Continue to Sources &amp; Draft &rarr;
+                  Continue to Sources &rarr;
                 </button>
               </div>
             </div>
@@ -1309,21 +1357,115 @@ function NewReviewWorkspace() {
         )}
 
         {step === 3 && (
-        <div className="mt-8 grid gap-6 lg:grid-cols-[380px_1fr]">
-          {/* Left column: light-touch inputs, documents first */}
-          <div className="space-y-5">
+        <div className="mt-8">
+          <button
+            type="button"
+            onClick={() => setStep(2)}
+            className="text-sm font-semibold text-un-blue-700 hover:text-un-blue-600"
+          >
+            &larr; Back to Send Surveys
+          </button>
+
+          {/* Full width now that the report lives on its own step — no
+              need to squeeze inputs into a narrow column. */}
+          <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_1.3fr] lg:items-start">
+            {/* First grid column: notes, prompt, and the generate action. */}
+            <div className="space-y-5">
+            <Panel title="Notes for the AI (optional)">
+              <p className="text-xs text-un-muted">
+                Anything not captured in the attached documents. One point
+                per line works best — specific numbers, dates, and figures
+                (funding amounts, deployment timelines, gender marker
+                scores) make for a much stronger draft than general
+                statements.
+              </p>
+              <textarea
+                value={notes}
+                onChange={(e) => setNotes(e.target.value)}
+                placeholder={
+                  "e.g.\nShelter procurement took six weeks against a four-week target\nCoordination with the Office of Civil Defense was a clear strength\nTRAC3 allocation of $500,000 approved on 2026-02-03, three weeks after the crisis was declared"
+                }
+                className="input mt-2 min-h-[120px] resize-y"
+              />
+            </Panel>
+
+            <Panel
+              title="Prompt instructions"
+              subtitle={
+                promptOpen
+                  ? undefined
+                  : prompt === DEFAULT_PROMPT
+                    ? "Using default template"
+                    : "Customized for this AAR"
+              }
+              action={
+                <button
+                  type="button"
+                  onClick={() => setPromptOpen((v) => !v)}
+                  className="text-xs font-semibold text-un-blue-700 hover:text-un-blue-600"
+                >
+                  {promptOpen ? "Hide" : "Edit"}
+                </button>
+              }
+            >
+              <p className="text-xs text-un-muted">
+                This is the exact instruction set the AI will follow when
+                generating this AAR&apos;s draft. Edit it to change tone,
+                add crisis-specific context, or adjust what it should
+                focus on — your changes are saved with this AAR.
+              </p>
+              {promptOpen ? (
+                <div className="mt-2 space-y-2">
+                  <textarea
+                    value={prompt}
+                    onChange={(e) => setPrompt(e.target.value)}
+                    className="input min-h-[220px] resize-y font-mono text-xs leading-relaxed"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setPrompt(DEFAULT_PROMPT)}
+                    className="text-xs font-semibold text-un-blue-700 hover:text-un-blue-600"
+                  >
+                    Reset to default
+                  </button>
+                </div>
+              ) : (
+                <p className="mt-2 whitespace-pre-line text-xs leading-relaxed text-un-ink">
+                  {prompt}
+                </p>
+              )}
+            </Panel>
+
             <button
               type="button"
-              onClick={() => setStep(2)}
-              className="text-sm font-semibold text-un-blue-700 hover:text-un-blue-600"
+              onClick={handleGenerate}
+              disabled={status === "generating"}
+              className="w-full rounded-full bg-un-gold-500 px-4 py-3 text-sm font-semibold text-un-blue-950 shadow-sm transition-colors hover:bg-un-gold-600 disabled:cursor-wait disabled:opacity-70"
             >
-              &larr; Back to Send Surveys
+              {status === "generating"
+                ? "Generating draft..."
+                : status === "ready"
+                  ? "Regenerate draft"
+                  : "Generate draft with AI"}
             </button>
+            </div>
 
+            {/* Second grid column: attach and manage source documents. */}
             <Panel
               title="Attach source documents"
               subtitle={
-                documents.length > 0 ? `${documents.length} attached` : undefined
+                documents.length > 0
+                  ? `${documents.length} attached`
+                  : "No documents attached"
+              }
+              action={
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  className="shrink-0 rounded-lg border border-un-border px-3 py-1.5 text-xs font-semibold text-un-blue-700 hover:bg-un-blue-50"
+                >
+                  + Add
+                </button>
               }
             >
               <p className="text-xs text-un-muted">
@@ -1331,75 +1473,98 @@ function NewReviewWorkspace() {
                 Board minutes — the AI drafts from what you attach here.
               </p>
 
-              <label
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragActive(true);
-                }}
-                onDragLeave={() => setDragActive(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragActive(false);
-                  addFiles(e.dataTransfer.files);
-                }}
+              <details className="group mt-2">
+                <summary className="cursor-pointer list-none text-xs font-semibold text-un-blue-700 marker:content-none">
+                  <span className="group-open:hidden">
+                    What should I attach?
+                  </span>
+                  <span className="hidden group-open:inline">
+                    Hide guidance
+                  </span>
+                </summary>
+                <div className="mt-2 space-y-2 rounded-lg border border-un-border bg-un-blue-50/40 p-3 text-xs leading-relaxed text-un-ink">
+                  <p>
+                    <span className="font-semibold">Most useful:</span> the
+                    AAR Terms of Reference (if one exists), Crisis Board /
+                    Country Management Team meeting minutes, corporate
+                    funding approval records (e.g. TRAC3, Funding Window
+                    allocations), and any programmatic proposals or recovery
+                    plans. These carry most of the evidence the draft needs.
+                  </p>
+                  <p>
+                    <span className="font-semibold">Adds real depth:</span>{" "}
+                    SURGE/deployment records and end-of-mission reports,
+                    business continuity or operational planning documents,
+                    assessments and situation reports, and donor/external
+                    funding records.
+                  </p>
+                  <p>
+                    <span className="font-semibold">Usually not needed:</span>{" "}
+                    individual project Annual Work Plans (a short summary of
+                    programmatic pillars and budgets is enough), routine
+                    emails, and exhaustive stakeholder contact lists — a
+                    short list of key stakeholders is enough, and the fuller
+                    list belongs in Step 2, not here.
+                  </p>
+                </div>
+              </details>
+
+              <div
                 className={
-                  "mt-3 flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors " +
-                  (dragActive
-                    ? "border-un-blue-500 bg-un-blue-50"
-                    : "border-un-border hover:border-un-blue-400 hover:bg-un-blue-50/40")
+                  documents.length === 0
+                    ? "mt-3 grid gap-3 sm:grid-cols-2"
+                    : "mt-3"
                 }
               >
-                <input
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    addFiles(e.target.files);
-                    e.target.value = "";
+                {documents.length === 0 && (
+                  <div className="flex items-center justify-center rounded-xl border-2 border-dashed border-un-border bg-un-blue-50/20 px-4 py-8 text-center">
+                    <span className="text-sm font-medium text-un-muted">
+                      No initial documents
+                    </span>
+                  </div>
+                )}
+                <label
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setDragActive(true);
                   }}
-                />
-                <span className="text-un-blue-600">
-                  <UploadIcon />
-                </span>
-                <span className="text-sm font-medium text-un-ink">
-                  Drag files here, or click to browse
-                </span>
-                <span className="text-xs text-un-muted">
-                  PDF, Word, Excel, or text files
-                </span>
-              </label>
+                  onDragLeave={() => setDragActive(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setDragActive(false);
+                    addFiles(e.dataTransfer.files);
+                  }}
+                  className={
+                    "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors " +
+                    (dragActive
+                      ? "border-un-blue-500 bg-un-blue-50"
+                      : "border-un-border hover:border-un-blue-400 hover:bg-un-blue-50/40")
+                  }
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    className="hidden"
+                    onChange={(e) => {
+                      addFiles(e.target.files);
+                      e.target.value = "";
+                    }}
+                  />
+                  <span className="text-un-blue-600">
+                    <UploadIcon />
+                  </span>
+                  <span className="text-sm font-medium text-un-ink">
+                    Add documents
+                  </span>
+                  <span className="text-xs text-un-muted">
+                    Drag files here, or click to browse
+                  </span>
+                </label>
+              </div>
 
               {fileError && (
                 <p className="mt-2 text-xs text-red-600">{fileError}</p>
-              )}
-
-              {documents.length > 0 && (
-                <ul className="mt-3 space-y-2">
-                  {documents.map((doc) => (
-                    <li
-                      key={doc.id}
-                      className="flex items-center justify-between gap-2 rounded-lg border border-un-border bg-un-blue-50/60 px-3 py-2 text-sm"
-                    >
-                      <span className="flex min-w-0 items-center gap-2 text-un-ink">
-                        <DocIcon />
-                        <span className="truncate">{doc.name}</span>
-                        {doc.size ? (
-                          <span className="shrink-0 text-xs text-un-muted">
-                            {formatBytes(doc.size)}
-                          </span>
-                        ) : null}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removeDocument(doc.id)}
-                        aria-label={`Remove ${doc.name}`}
-                        className="shrink-0 text-un-muted hover:text-un-blue-700"
-                      >
-                        &times;
-                      </button>
-                    </li>
-                  ))}
-                </ul>
               )}
 
               <div className="mt-3 flex gap-2">
@@ -1424,105 +1589,75 @@ function NewReviewWorkspace() {
                 </button>
               </div>
 
-              <div className="mt-4">
-                <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-un-muted">
-                  How was evidence gathered? (optional)
-                </span>
-                <div className="flex flex-wrap gap-2">
-                  {dataCollectionMethods.map((method) => {
-                    const active = methods.includes(method);
-                    return (
-                      <button
-                        key={method}
-                        type="button"
-                        onClick={() =>
-                          setMethods((prev) =>
-                            active
-                              ? prev.filter((m) => m !== method)
-                              : [...prev, method],
-                          )
-                        }
-                        className={
-                          "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors " +
-                          (active
-                            ? "border-un-blue-600 bg-un-blue-600 text-white"
-                            : "border-un-border text-un-muted hover:border-un-blue-400 hover:text-un-blue-700")
-                        }
-                      >
-                        {method}
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
-            </Panel>
-
-            <Panel title="Notes for the AI (optional)">
-              <p className="text-xs text-un-muted">
-                Anything not captured in the attached documents. One point
-                per line works best.
-              </p>
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder={
-                  "e.g.\nShelter procurement took six weeks against a four-week target\nCoordination with the Office of Civil Defense was a clear strength"
-                }
-                className="input mt-2 min-h-[120px] resize-y"
-              />
-            </Panel>
-
-            <Panel
-              title="Prompt instructions"
-              subtitle={promptOpen ? undefined : "Using default template"}
-              action={
-                <button
-                  type="button"
-                  onClick={() => setPromptOpen((v) => !v)}
-                  className="text-xs font-semibold text-un-blue-700 hover:text-un-blue-600"
-                >
-                  {promptOpen ? "Hide" : "Edit"}
-                </button>
-              }
-            >
-              {promptOpen ? (
-                <div className="space-y-2">
-                  <textarea
-                    value={prompt}
-                    onChange={(e) => setPrompt(e.target.value)}
-                    className="input min-h-[160px] resize-y font-mono text-xs leading-relaxed"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setPrompt(DEFAULT_PROMPT)}
-                    className="text-xs font-semibold text-un-blue-700 hover:text-un-blue-600"
-                  >
-                    Reset to default
-                  </button>
-                </div>
-              ) : (
-                <p className="text-xs leading-relaxed text-un-muted line-clamp-3">
-                  {prompt}
-                </p>
+              {documents.length > 0 && (
+                <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {documents.map((doc) => (
+                    <li
+                      key={doc.id}
+                      className="rounded-xl border border-un-border bg-un-blue-50/40 p-3.5"
+                    >
+                      <div className="flex items-start justify-between gap-2">
+                        <span className="flex min-w-0 items-center gap-2 text-sm text-un-ink">
+                          <DocIcon />
+                          <span className="min-w-0 truncate font-medium">
+                            {doc.name}
+                          </span>
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => removeDocument(doc.id)}
+                          aria-label={`Remove ${doc.name}`}
+                          className="shrink-0 rounded-full p-1 text-un-muted hover:bg-white hover:text-red-600"
+                        >
+                          &times;
+                        </button>
+                      </div>
+                      {doc.size ? (
+                        <p className="mt-0.5 text-xs text-un-muted">
+                          {formatBytes(doc.size)}
+                        </p>
+                      ) : null}
+                      <label className="mt-2.5 block">
+                        <span className="text-xs font-medium text-un-muted">
+                          How was this gathered?
+                        </span>
+                        <select
+                          value={doc.dataCollectionMethod ?? ""}
+                          onChange={(e) =>
+                            setDocumentMethod(doc.id, e.target.value)
+                          }
+                          className="input mt-1 py-1.5 text-xs"
+                        >
+                          <option value="">Not specified</option>
+                          {dataCollectionMethods.map((method) => (
+                            <option key={method} value={method}>
+                              {method}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    </li>
+                  ))}
+                </ul>
               )}
             </Panel>
-
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={status === "generating"}
-              className="w-full rounded-full bg-un-gold-500 px-4 py-3 text-sm font-semibold text-un-blue-950 shadow-sm transition-colors hover:bg-un-gold-600 disabled:cursor-wait disabled:opacity-70"
-            >
-              {status === "generating"
-                ? "Generating draft..."
-                : status === "ready"
-                  ? "Regenerate draft"
-                  : "Generate draft with AI"}
-            </button>
           </div>
+        </div>
+        )}
 
-          {/* Right column: the generated report, editable and interactive */}
-          <div className="rounded-2xl border border-un-border bg-un-surface shadow-sm">
+        {step === 4 && (
+        <div className="mt-8">
+          <button
+            type="button"
+            onClick={() => setStep(3)}
+            className="text-sm font-semibold text-un-blue-700 hover:text-un-blue-600"
+          >
+            &larr; Back to Sources
+          </button>
+
+          {/* Full width — this is now its own step, not sharing the row
+              with the input panels. */}
+          <div className="mt-5 rounded-2xl border border-un-border bg-un-surface shadow-sm">
             <div className="flex items-center justify-between border-b border-un-border px-6 py-4">
               <div>
                 <h2 className="font-serif text-lg font-semibold text-un-ink">
@@ -1536,7 +1671,23 @@ function NewReviewWorkspace() {
             </div>
 
             <div className="p-6">
-              {status === "idle" && <EmptyState />}
+              {status === "idle" && (
+                <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-un-border py-16 text-center">
+                  <p className="max-w-sm text-sm text-un-muted">
+                    No draft yet. Head back to Sources, attach documents or
+                    add a few notes, then generate a draft — you&apos;ll be
+                    able to edit every section, and add timeline events,
+                    findings, and people consulted right here.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setStep(3)}
+                    className="text-sm font-semibold text-un-blue-700 hover:text-un-blue-600"
+                  >
+                    &larr; Back to Sources
+                  </button>
+                </div>
+              )}
               {status === "generating" && <GeneratingState />}
 
               {status === "ready" && (
@@ -1761,23 +1912,6 @@ function NewReviewWorkspace() {
         </div>
         )}
       </div>
-
-      <style jsx global>{`
-        .input {
-          width: 100%;
-          border-radius: 0.5rem;
-          border: 1px solid var(--un-border);
-          background: white;
-          padding: 0.55rem 0.75rem;
-          font-size: 0.875rem;
-          color: var(--un-ink);
-        }
-        .input:focus {
-          outline: none;
-          border-color: var(--un-blue-500);
-          box-shadow: 0 0 0 3px var(--un-blue-100);
-        }
-      `}</style>
     </main>
   );
 }
@@ -1832,450 +1966,6 @@ function StepIndicator({
   );
 }
 
-function Panel({
-  title,
-  subtitle,
-  action,
-  children,
-}: {
-  title: string;
-  subtitle?: string;
-  action?: React.ReactNode;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-2xl border border-un-border bg-un-surface p-5 shadow-sm">
-      <div className="flex items-center justify-between gap-2">
-        <h2 className="text-sm font-semibold text-un-ink">{title}</h2>
-        {action ??
-          (subtitle && (
-            <span className="text-xs text-un-muted">{subtitle}</span>
-          ))}
-      </div>
-      <div className="mt-3">{children}</div>
-    </section>
-  );
-}
-
-function Field({
-  label,
-  children,
-}: {
-  label: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <label className="block">
-      <span className="mb-1.5 block text-xs font-semibold uppercase tracking-wide text-un-muted">
-        {label}
-      </span>
-      {children}
-    </label>
-  );
-}
-
-function TimelineField({
-  entries,
-  onChange,
-}: {
-  entries: TimelineEntry[];
-  onChange: (entries: TimelineEntry[]) => void;
-}) {
-  const [date, setDate] = useState("");
-  const [event, setEvent] = useState("");
-
-  function add() {
-    if (!event.trim()) return;
-    onChange([...entries, { date, event: event.trim() }]);
-    setDate("");
-    setEvent("");
-  }
-
-  function remove(index: number) {
-    onChange(entries.filter((_, i) => i !== index));
-  }
-
-  return (
-    <div>
-      {entries.length > 0 ? (
-        <ol className="mb-2 space-y-1.5">
-          {entries.map((entry, index) => (
-            <li
-              key={index}
-              className="flex items-start gap-2 rounded-lg border border-un-border bg-un-blue-50/60 px-3 py-1.5 text-sm"
-            >
-              <span className="w-20 shrink-0 font-mono text-xs text-un-blue-700">
-                {entry.date || "no date"}
-              </span>
-              <span className="flex-1 text-un-ink">{entry.event}</span>
-              <button
-                type="button"
-                onClick={() => remove(index)}
-                aria-label="Remove"
-                className="text-un-muted hover:text-un-blue-700"
-              >
-                &times;
-              </button>
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p className="mb-2 text-sm text-un-muted">
-          No events added yet — add key dates from the sources below.
-        </p>
-      )}
-      <div className="flex gap-2">
-        <div className="w-36 shrink-0">
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            className="input"
-          />
-        </div>
-        <input
-          value={event}
-          onChange={(e) => setEvent(e.target.value)}
-          placeholder="e.g. Crisis Board activates response plan"
-          className="input"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add();
-            }
-          }}
-        />
-        <button
-          type="button"
-          onClick={add}
-          className="shrink-0 rounded-lg border border-un-border px-3 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
-        >
-          Add
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function IntervieweeField({
-  people,
-  onChange,
-}: {
-  people: Interviewee[];
-  onChange: (people: Interviewee[]) => void;
-}) {
-  const [form, setForm] = useState<Interviewee>({
-    name: "",
-    title: "",
-    agency: "",
-  });
-
-  function add() {
-    if (!form.name.trim()) return;
-    onChange([...people, form]);
-    setForm({ name: "", title: "", agency: "" });
-  }
-
-  function remove(index: number) {
-    onChange(people.filter((_, i) => i !== index));
-  }
-
-  return (
-    <div>
-      {people.length > 0 && (
-        <ul className="mb-3 space-y-1.5">
-          {people.map((person, index) => (
-            <li
-              key={index}
-              className="flex items-center justify-between gap-2 rounded-lg border border-un-border bg-un-blue-50/60 px-3 py-1.5 text-sm"
-            >
-              <span className="text-un-ink">
-                <span className="font-medium">{person.name}</span>
-                {person.title && (
-                  <span className="text-un-muted"> &middot; {person.title}</span>
-                )}
-                {person.agency && (
-                  <span className="text-un-muted"> &middot; {person.agency}</span>
-                )}
-              </span>
-              <button
-                type="button"
-                onClick={() => remove(index)}
-                aria-label={`Remove ${person.name}`}
-                className="text-un-muted hover:text-un-blue-700"
-              >
-                &times;
-              </button>
-            </li>
-          ))}
-        </ul>
-      )}
-      <div className="grid grid-cols-3 gap-2">
-        <input
-          value={form.name}
-          onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
-          placeholder="Name"
-          className="input"
-        />
-        <input
-          value={form.title}
-          onChange={(e) => setForm((f) => ({ ...f, title: e.target.value }))}
-          placeholder="Title"
-          className="input"
-        />
-        <input
-          value={form.agency}
-          onChange={(e) =>
-            setForm((f) => ({ ...f, agency: e.target.value }))
-          }
-          placeholder="Agency / unit"
-          className="input"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") {
-              e.preventDefault();
-              add();
-            }
-          }}
-        />
-      </div>
-      <button
-        type="button"
-        onClick={add}
-        className="mt-2 w-full rounded-lg border border-dashed border-un-border px-3 py-1.5 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
-      >
-        + Add person
-      </button>
-    </div>
-  );
-}
-
-const EMPTY_MATRIX_ROW: FindingRow = {
-  responseArea: responseAreas[0],
-  finding: "",
-  recommendation: "",
-  keyActions: "",
-  priority: "Medium",
-};
-
-function MatrixField({
-  rows,
-  onChange,
-}: {
-  rows: FindingRow[];
-  onChange: (rows: FindingRow[]) => void;
-}) {
-  const [formOpen, setFormOpen] = useState(false);
-  const [form, setForm] = useState<FindingRow>(EMPTY_MATRIX_ROW);
-
-  function add() {
-    if (!form.finding.trim() || !form.recommendation.trim()) return;
-    onChange([...rows, form]);
-    setForm(EMPTY_MATRIX_ROW);
-    setFormOpen(false);
-  }
-
-  function remove(index: number) {
-    onChange(rows.filter((_, i) => i !== index));
-  }
-
-  return (
-    <div>
-      {rows.length > 0 && (
-        <ul className="mb-3 space-y-2">
-          {rows.map((row, index) => (
-            <li
-              key={index}
-              className="rounded-lg border border-un-border bg-un-blue-50/60 px-3 py-2"
-            >
-              <div className="flex items-start justify-between gap-2">
-                <div>
-                  <span className="text-xs font-semibold uppercase tracking-wide text-un-blue-600">
-                    {row.responseArea}
-                  </span>
-                  <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-[0.65rem] font-semibold text-un-blue-700 ring-1 ring-un-blue-200">
-                    {row.priority}
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => remove(index)}
-                  aria-label="Remove finding"
-                  className="text-un-muted hover:text-un-blue-700"
-                >
-                  &times;
-                </button>
-              </div>
-              <p className="mt-1 text-sm text-un-ink">{row.finding}</p>
-              <p className="mt-1 text-xs text-un-muted">
-                &rarr; {row.recommendation}
-              </p>
-            </li>
-          ))}
-        </ul>
-      )}
-
-      {formOpen ? (
-        <div className="space-y-2.5 rounded-lg border border-un-border p-3">
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="Response area">
-              <select
-                value={form.responseArea}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    responseArea: e.target.value as ResponseArea,
-                  }))
-                }
-                className="input"
-              >
-                {responseAreas.map((area) => (
-                  <option key={area} value={area}>
-                    {area}
-                  </option>
-                ))}
-              </select>
-            </Field>
-            <Field label="Priority">
-              <select
-                value={form.priority}
-                onChange={(e) =>
-                  setForm((f) => ({
-                    ...f,
-                    priority: e.target.value as PriorityLevel,
-                  }))
-                }
-                className="input"
-              >
-                {priorityLevels.map((p) => (
-                  <option key={p} value={p}>
-                    {p}
-                  </option>
-                ))}
-              </select>
-            </Field>
-          </div>
-          <Field label="Finding">
-            <input
-              value={form.finding}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, finding: e.target.value }))
-              }
-              placeholder="What happened, stated plainly"
-              className="input"
-            />
-          </Field>
-          <Field label="Recommendation">
-            <input
-              value={form.recommendation}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, recommendation: e.target.value }))
-              }
-              placeholder="What should change"
-              className="input"
-            />
-          </Field>
-          <Field label="Key actions required">
-            <input
-              value={form.keyActions}
-              onChange={(e) =>
-                setForm((f) => ({ ...f, keyActions: e.target.value }))
-              }
-              placeholder="Who does what, concretely"
-              className="input"
-            />
-          </Field>
-          <div className="flex gap-2 pt-1">
-            <button
-              type="button"
-              onClick={add}
-              className="rounded-lg bg-un-blue-600 px-3 py-1.5 text-sm font-semibold text-white hover:bg-un-blue-700"
-            >
-              Add row
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setFormOpen(false);
-                setForm(EMPTY_MATRIX_ROW);
-              }}
-              className="rounded-lg px-3 py-1.5 text-sm font-semibold text-un-muted hover:bg-un-blue-50"
-            >
-              Cancel
-            </button>
-          </div>
-        </div>
-      ) : (
-        <button
-          type="button"
-          onClick={() => setFormOpen(true)}
-          className="w-full rounded-lg border border-dashed border-un-border px-3 py-2 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
-        >
-          + Add a finding
-        </button>
-      )}
-    </div>
-  );
-}
-
-function ArtifactField({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div>
-      <h3 className="font-serif text-base font-semibold text-un-ink border-b border-un-border pb-2">
-        {label}
-      </h3>
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="input mt-2 min-h-[90px] resize-y leading-relaxed"
-      />
-    </div>
-  );
-}
-
-function AccordionArtifact({
-  label,
-  value,
-  onChange,
-  defaultOpen = false,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-  defaultOpen?: boolean;
-}) {
-  return (
-    <details
-      className="group rounded-lg border border-un-border open:bg-un-blue-50/20"
-      open={defaultOpen}
-    >
-      <summary className="cursor-pointer list-none px-3.5 py-2.5 text-sm font-semibold text-un-ink marker:content-none flex items-center justify-between gap-2">
-        {label}
-        <span
-          aria-hidden
-          className="text-un-muted transition-transform group-open:rotate-180"
-        >
-          &#9662;
-        </span>
-      </summary>
-      <div className="px-3.5 pb-3.5 pt-1">
-        <textarea
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          className="input min-h-[80px] resize-y leading-relaxed"
-        />
-      </div>
-    </details>
-  );
-}
-
 function StatusPill({ status }: { status: "idle" | "generating" | "ready" }) {
   const map = {
     idle: { text: "Waiting for input", cls: "bg-slate-100 text-slate-600" },
@@ -2296,21 +1986,6 @@ function StatusPill({ status }: { status: "idle" | "generating" | "ready" }) {
   );
 }
 
-function EmptyState() {
-  return (
-    <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-un-border py-16 text-center">
-      <div className="rounded-full bg-un-blue-50 p-3 text-un-blue-600">
-        <SparkleIcon />
-      </div>
-      <p className="max-w-sm text-sm text-un-muted">
-        Attach source documents or add a few notes on the left, then
-        generate a draft. You&apos;ll be able to edit every section — and
-        add timeline events, findings, and people consulted — right here.
-      </p>
-    </div>
-  );
-}
-
 function GeneratingState() {
   return (
     <div className="space-y-6 animate-pulse">
@@ -2323,47 +1998,5 @@ function GeneratingState() {
         ),
       )}
     </div>
-  );
-}
-
-function SparkleIcon() {
-  return (
-    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="currentColor">
-      <path d="M12 2l1.6 5.4L19 9l-5.4 1.6L12 16l-1.6-5.4L5 9l5.4-1.6L12 2Z" />
-      <path d="M19 15l0.7 2.3L22 18l-2.3 0.7L19 21l-0.7-2.3L16 18l2.3-0.7L19 15Z" />
-    </svg>
-  );
-}
-
-function UploadIcon() {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      className="h-6 w-6"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-    >
-      <path d="M12 16V4" />
-      <path d="M7 9l5-5 5 5" />
-      <path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" />
-    </svg>
-  );
-}
-
-function DocIcon() {
-  return (
-    <svg
-      viewBox="0 0 20 20"
-      className="h-4 w-4 shrink-0 text-un-blue-600"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth="1.6"
-    >
-      <path d="M5 3h7l3 3v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
-      <path d="M12 3v3h3" />
-    </svg>
   );
 }

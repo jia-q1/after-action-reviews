@@ -3,6 +3,7 @@ import { notFound } from "next/navigation";
 import { priorityStyles, type Review } from "@/data/reviews";
 import { getRecordBySlug } from "@/lib/db";
 import StatusBadge from "@/components/status-badge";
+import DeleteReviewButton from "./delete-review-button";
 import { formatMonthYear, formatPeriod } from "@/lib/format";
 
 // Content now comes from the database and can change at any time (someone
@@ -208,21 +209,19 @@ export default async function ReviewPage({
             </div>
 
             <div className="rounded-2xl border border-un-border bg-un-surface p-5 shadow-sm space-y-2">
-              {review.sharepointUrl && (
-                <a
-                  href={review.sharepointUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="block w-full rounded-full bg-un-blue-600 px-4 py-2.5 text-center text-sm font-semibold text-white transition-colors hover:bg-un-blue-700"
-                >
-                  View full report on SharePoint
-                </a>
-              )}
               <Link
-                href={`/new?edit=${encodeURIComponent(review.slug)}`}
+                href={
+                  review.stage === "Under Review" || review.status === "Completed"
+                    ? `/reviews/${encodeURIComponent(review.slug)}/edit`
+                    : `/new?edit=${encodeURIComponent(review.slug)}`
+                }
                 className="block w-full rounded-full border border-un-border px-4 py-2.5 text-center text-sm font-semibold text-un-blue-700 transition-colors hover:bg-un-blue-50"
               >
-                {isInProgress ? "Continue drafting" : "Edit this review"}
+                {review.stage === "Under Review"
+                  ? "Review & edit"
+                  : review.status === "Completed"
+                    ? "Edit this review"
+                    : "Continue drafting"}
               </Link>
               <button
                 type="button"
@@ -230,6 +229,9 @@ export default async function ReviewPage({
               >
                 Export as document
               </button>
+              {review.status === "Completed" && (
+                <DeleteReviewButton slug={review.slug} />
+              )}
             </div>
           </aside>
         </div>
