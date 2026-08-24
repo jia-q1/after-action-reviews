@@ -155,12 +155,6 @@ export default function LibraryPage() {
     );
   }, [inProgress]);
 
-  const counts = {
-    total: records.length,
-    completed: records.filter((r) => r.status === "Completed").length,
-    inProgress: records.filter((r) => r.status === "In Progress").length,
-  };
-
   return (
     <main className="flex-1 bg-background">
       <section className="border-b border-un-border bg-gradient-to-br from-un-blue-950 via-un-blue-900 to-un-blue-700 text-white">
@@ -207,12 +201,6 @@ export default function LibraryPage() {
               </Link>
             </div>
           </div>
-
-          <dl className="mt-10 grid grid-cols-3 gap-4 max-w-xl">
-            <StatTile label="Total reviews" value={counts.total} />
-            <StatTile label="Completed" value={counts.completed} />
-            <StatTile label="In progress" value={counts.inProgress} />
-          </dl>
         </div>
       </section>
 
@@ -412,17 +400,6 @@ export default function LibraryPage() {
         </div>
       </section>
     </main>
-  );
-}
-
-function StatTile({ label, value }: { label: string; value: number }) {
-  return (
-    <div className="rounded-xl bg-white/10 backdrop-blur-sm px-4 py-3 ring-1 ring-white/15">
-      <dt className="text-xs text-un-blue-100">{label}</dt>
-      <dd className="mt-1 font-serif text-2xl font-semibold text-white">
-        {value}
-      </dd>
-    </div>
   );
 }
 
