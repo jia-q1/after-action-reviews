@@ -343,57 +343,44 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
               </button>
             }
           >
-            <div
+            <label
+              onDragOver={(e) => {
+                e.preventDefault();
+                setDragActive(true);
+              }}
+              onDragLeave={() => setDragActive(false)}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragActive(false);
+                addFiles(e.dataTransfer.files);
+              }}
               className={
-                documents.length === 0 ? "grid gap-3 sm:grid-cols-2" : ""
+                "flex cursor-pointer flex-col items-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors " +
+                (dragActive
+                  ? "border-un-blue-500 bg-un-blue-50"
+                  : "border-un-border hover:border-un-blue-400 hover:bg-un-blue-50/40")
               }
             >
-              {documents.length === 0 && (
-                <div className="flex items-center justify-center rounded-xl border-2 border-dashed border-un-border bg-un-blue-50/20 px-4 py-8 text-center">
-                  <span className="text-sm font-medium text-un-muted">
-                    No initial documents
-                  </span>
-                </div>
-              )}
-              <label
-                onDragOver={(e) => {
-                  e.preventDefault();
-                  setDragActive(true);
+              <input
+                ref={fileInputRef}
+                type="file"
+                multiple
+                className="hidden"
+                onChange={(e) => {
+                  addFiles(e.target.files);
+                  e.target.value = "";
                 }}
-                onDragLeave={() => setDragActive(false)}
-                onDrop={(e) => {
-                  e.preventDefault();
-                  setDragActive(false);
-                  addFiles(e.dataTransfer.files);
-                }}
-                className={
-                  "flex cursor-pointer flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 text-center transition-colors " +
-                  (dragActive
-                    ? "border-un-blue-500 bg-un-blue-50"
-                    : "border-un-border hover:border-un-blue-400 hover:bg-un-blue-50/40")
-                }
-              >
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  multiple
-                  className="hidden"
-                  onChange={(e) => {
-                    addFiles(e.target.files);
-                    e.target.value = "";
-                  }}
-                />
-                <span className="text-un-blue-600">
-                  <UploadIcon />
-                </span>
-                <span className="text-sm font-medium text-un-ink">
-                  Add documents
-                </span>
-                <span className="text-xs text-un-muted">
-                  Drag files here, or click to browse
-                </span>
-              </label>
-            </div>
+              />
+              <span className="text-un-blue-600">
+                <UploadIcon />
+              </span>
+              <span className="text-sm font-medium text-un-ink">
+                Drag files here, or click to browse
+              </span>
+              <span className="text-xs text-un-muted">
+                PDF, Word, Excel, or text files
+              </span>
+            </label>
 
             {fileError && (
               <p className="mt-2 text-xs text-red-600">{fileError}</p>
