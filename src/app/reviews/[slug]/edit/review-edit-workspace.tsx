@@ -285,10 +285,11 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
     <main className="flex-1 bg-background">
       <div className="mx-auto max-w-5xl px-4 sm:px-6 lg:px-8 py-8">
         <Link
-          href="/"
+          href={record.status === "Completed" ? "/" : "/workspace"}
           className="inline-flex items-center gap-1.5 text-sm font-medium text-un-blue-700 hover:text-un-blue-600"
         >
-          <span aria-hidden>&larr;</span> Back to library
+          <span aria-hidden>&larr;</span>{" "}
+          {record.status === "Completed" ? "Back to library" : "Back to workspace"}
         </Link>
 
         <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">

@@ -21,7 +21,7 @@ export default function SiteFooter() {
           <p className="font-semibold text-white mb-2">Navigate</p>
           <ul className="space-y-1.5 text-un-blue-400">
             <li>Review Library</li>
-            <li>Draft a New Review</li>
+            <li>AAR Workspace</li>
             <li>Review Guidelines</li>
           </ul>
         </div>

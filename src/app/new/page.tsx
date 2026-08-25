@@ -596,7 +596,7 @@ function NewReviewWorkspace() {
     if (!slug) return;
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     await saveRecord(buildRecord());
-    router.push("/");
+    router.push("/workspace");
   }
 
   async function handleSaveAndWaitForResponses() {
@@ -608,7 +608,7 @@ function NewReviewWorkspace() {
     };
     setOverview(updatedOverview);
     await saveRecord(buildRecord({ overview: updatedOverview }));
-    router.push("/");
+    router.push("/workspace");
   }
 
   async function handleSubmitForReview() {
@@ -620,7 +620,7 @@ function NewReviewWorkspace() {
     };
     setOverview(updatedOverview);
     await saveRecord(buildRecord({ overview: updatedOverview }));
-    router.push("/");
+    router.push("/workspace");
   }
 
   async function handleCompleteAar() {

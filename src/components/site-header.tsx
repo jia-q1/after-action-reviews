@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation";
 
 const navLinks = [
   { href: "/", label: "Review Library" },
-  { href: "/new", label: "Draft a New Review" },
+  { href: "/workspace", label: "AAR Workspace" },
 ];
 
 export default function SiteHeader() {
@@ -35,7 +35,9 @@ export default function SiteHeader() {
                 const isActive =
                   link.href === "/"
                     ? pathname === "/"
-                    : pathname.startsWith(link.href);
+                    : pathname.startsWith(link.href) ||
+                      pathname.startsWith("/new") ||
+                      /^\/reviews\/[^/]+\/edit/.test(pathname);
                 return (
                   <Link
                     key={link.href}
