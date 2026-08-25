@@ -21,6 +21,7 @@ import {
 import {
   AccordionArtifact,
   ArtifactField,
+  Bibliography,
   DocIcon,
   IntervieweeField,
   MatrixField,
@@ -63,6 +64,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
   const [interviewees, setInterviewees] = useState<Interviewee[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [manualSourceName, setManualSourceName] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
@@ -163,6 +165,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
   }
 
   async function handleSave() {
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     const updated = buildUpdatedRecord();
     if (!updated) return;
     setIsSaving(true);
@@ -173,16 +176,23 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
   }
 
   async function handleComplete() {
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     const updated = buildUpdatedRecord("Completed");
     if (!updated) return;
     await saveRecord(updated);
+    setRecord(updated);
     router.push("/");
   }
 
   // Autosave shortly after any edit, same pattern as the drafting wizard.
+  // The timer is kept in a ref (not just the effect's closure) so an explicit
+  // Save/Complete can cancel it directly -- relying on the cleanup function
+  // alone is not reliable here, since router.push() navigation doesn't
+  // guarantee this component unmounts before a near-due timer fires, which
+  // let a stale autosave silently revert a just-completed AAR.
   useEffect(() => {
     if (!record) return;
-    const timer = setTimeout(() => {
+    autosaveTimer.current = setTimeout(() => {
       const updated = buildUpdatedRecord();
       if (!updated) return;
       setIsSaving(true);
@@ -193,7 +203,9 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
         })
         .finally(() => setIsSaving(false));
     }, 2000);
-    return () => clearTimeout(timer);
+    return () => {
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documents, draft, timeline, findingsMatrix, interviewees]);
 
@@ -638,6 +650,8 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
                   </p>
                 )}
               </div>
+
+              <Bibliography documents={documents} />
 
               <div>
                 <div className="flex items-center justify-between border-b border-un-border pb-2">

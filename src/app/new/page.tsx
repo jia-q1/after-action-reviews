@@ -31,6 +31,7 @@ import {
 import {
   AccordionArtifact,
   ArtifactField,
+  Bibliography,
   DocIcon,
   Field,
   IntervieweeField,
@@ -53,11 +54,13 @@ type Step = (typeof STEPS)[number]["id"];
 
 const DEFAULT_PROMPT = `You are an expert consultant specializing in After Action Reviews (AARs) for international development organizations, drafting a review for the UNDP Crisis Response Unit that follows the official AAR Final Report template.
 
-Read and synthesize all attached source documents and any notes provided, and extract the relevant facts for each section. Distinguish between corporate/HQ-level and Country Office-level decisions and action where the sources support it, and build the timeline from documented events rather than impressions. Where the sources contain specific data points — funding amounts, dates, deployment details, gender marker scores — cite them directly instead of writing in general terms.
+Read and synthesize all attached source documents and any notes provided, and extract the relevant facts for each section. Distinguish between corporate/HQ-level and Country Office-level decisions and action where the sources support it, and build the timeline from documented events rather than impressions. Where the sources contain specific data points — funding amounts (e.g. TRAC3, Funding Window allocations, total external funds leveraged), dates, deployment details, gender marker scores — cite them directly instead of writing in general terms.
+
+For each part of the analysis, evaluate it through these lenses where the evidence supports it: the clarity and timeliness of the decision-making behind it (including risk management and compliance with standard procedures); how well assessments and evidence informed it; and, where relevant, the pertinence and timeliness of corporate support (technical expertise, financial support, HQ/Regional Bureau engagement) that backed it up.
 
 Write clear, professional, neutral prose suitable for an institutional record, and do not invent details that aren't supported by the sources. Where a section isn't covered yet, leave a clear note for the human reviewer instead of guessing.
 
-Findings and recommendations should stay forward-looking and focused on institutional learning rather than assigning blame. Keep them as direct, actionable statements, and where the evidence makes it clear, name which part of the organization (e.g. Crisis Bureau, a Regional Bureau, the Country Office) is best placed to act on each recommendation.
+Findings and recommendations should stay forward-looking and focused on institutional learning rather than assigning blame. Keep them as direct, actionable statements, and organize recommendations by which part of the organization is best placed to act on them (e.g. Crisis Bureau, a Regional Bureau, another relevant HQ unit, or the Country Office) where the evidence makes that clear.
 
 If a source document includes personal details about individuals or vulnerable groups, include only what's necessary to support a specific finding rather than restating identifying details that aren't relevant.`;
 
@@ -221,6 +224,7 @@ function NewReviewWorkspace() {
 
   const [documents, setDocuments] = useState<DocumentSource[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dragActive, setDragActive] = useState(false);
   const [manualSourceName, setManualSourceName] = useState("");
   const [fileError, setFileError] = useState<string | null>(null);
@@ -350,11 +354,16 @@ function NewReviewWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
-  // Auto-save the record when changes are made
+  // Auto-save the record when changes are made. The timer is kept in a ref
+  // (not just this effect's closure) so an explicit save/submit/complete
+  // action can cancel it directly -- the cleanup function alone isn't
+  // reliable here, since router.push() navigation doesn't guarantee this
+  // component unmounts before a near-due timer fires, which can let a
+  // stale autosave silently re-save over a just-changed status.
   useEffect(() => {
     if (!slug) return;
-    
-    const saveTimer = setTimeout(() => {
+
+    autosaveTimer.current = setTimeout(() => {
       setIsSaving(true);
       saveRecord(buildRecord()).then(() => {
         setLastSaveTime(new Date());
@@ -363,8 +372,10 @@ function NewReviewWorkspace() {
         setIsSaving(false);
       });
     }, 2000); // Auto-save 2 seconds after last change
-    
-    return () => clearTimeout(saveTimer);
+
+    return () => {
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug, overview, documents, notes, draft, timeline, findingsMatrix, interviewees, recordStatus, tags]);
 
@@ -565,12 +576,14 @@ function NewReviewWorkspace() {
 
   async function handleSaveAsDraft() {
     if (!slug) return;
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     await saveRecord(buildRecord());
     router.push("/");
   }
 
   async function handleSaveAndWaitForResponses() {
     if (!slug) return;
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     const updatedOverview: OverviewState = {
       ...overview,
       stage: "Awaiting Survey Responses",
@@ -582,6 +595,7 @@ function NewReviewWorkspace() {
 
   async function handleSubmitForReview() {
     if (!slug) return;
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     const updatedOverview: OverviewState = {
       ...overview,
       stage: "Under Review",
@@ -593,6 +607,7 @@ function NewReviewWorkspace() {
 
   async function handleCompleteAar() {
     if (!slug) return;
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     setRecordStatus("Completed");
     await saveRecord(buildRecord({ status: "Completed" }));
     router.push("/");
@@ -1863,6 +1878,8 @@ function NewReviewWorkspace() {
                       </p>
                     )}
                   </div>
+
+                  <Bibliography documents={documents} />
 
                   <div>
                     <div className="flex items-center justify-between border-b border-un-border pb-2">

@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { priorityStyles, type Review } from "@/data/reviews";
 import { getRecordBySlug } from "@/lib/db";
+import type { DocumentSource } from "@/lib/aar-store";
 import StatusBadge from "@/components/status-badge";
 import DeleteReviewButton from "./delete-review-button";
 import { formatMonthYear, formatPeriod } from "@/lib/format";
@@ -154,6 +155,12 @@ export default async function ReviewPage({
               {review.findingsMatrix.length > 0 && (
                 <Section title="Annex 7: Matrix of Main Findings and Recommendations">
                   <FindingsMatrix review={review} />
+                </Section>
+              )}
+
+              {review.documents.length > 0 && (
+                <Section title="Annex 2: Desk Review Bibliography">
+                  <DocumentBibliography documents={review.documents} />
                 </Section>
               )}
 
@@ -397,6 +404,26 @@ function FindingsMatrix({ review }: { review: Review }) {
         </tbody>
       </table>
     </div>
+  );
+}
+
+function DocumentBibliography({ documents }: { documents: DocumentSource[] }) {
+  return (
+    <ul className="space-y-1.5">
+      {documents.map((doc) => (
+        <li
+          key={doc.id}
+          className="flex items-center justify-between gap-2 rounded-lg border border-un-border bg-un-blue-50/30 px-3 py-1.5 text-sm"
+        >
+          <span className="min-w-0 truncate text-un-ink/90">{doc.name}</span>
+          {doc.dataCollectionMethod && (
+            <span className="shrink-0 rounded-full bg-un-blue-50 px-2 py-0.5 text-[0.65rem] font-medium text-un-blue-700">
+              {doc.dataCollectionMethod}
+            </span>
+          )}
+        </li>
+      ))}
+    </ul>
   );
 }
 

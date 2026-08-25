@@ -14,6 +14,7 @@ import {
   type ResponseArea,
   type TimelineEntry,
 } from "@/data/reviews";
+import type { DocumentSource } from "@/lib/aar-store";
 
 export const MAX_FILE_BYTES = 15 * 1024 * 1024;
 
@@ -550,5 +551,45 @@ export function DocIcon() {
       <path d="M5 3h7l3 3v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1Z" />
       <path d="M12 3v3h3" />
     </svg>
+  );
+}
+
+// Auto-derived from whatever's attached — no fixed document categories,
+// so it holds up the same way for any country or crisis type rather than
+// baking in one AAR's specific source breakdown.
+export function Bibliography({ documents }: { documents: DocumentSource[] }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between border-b border-un-border pb-2">
+        <h3 className="font-serif text-base font-semibold text-un-ink">
+          Annex 2: Desk review bibliography
+        </h3>
+        <span className="text-xs text-un-muted">
+          {documents.length} document{documents.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      {documents.length > 0 ? (
+        <ul className="mt-3 space-y-1.5">
+          {documents.map((doc) => (
+            <li
+              key={doc.id}
+              className="flex items-center gap-2 text-sm text-un-ink/90"
+            >
+              <DocIcon />
+              <span className="min-w-0 truncate">{doc.name}</span>
+              {doc.dataCollectionMethod && (
+                <span className="shrink-0 rounded-full bg-un-blue-50 px-2 py-0.5 text-[0.65rem] font-medium text-un-blue-700">
+                  {doc.dataCollectionMethod}
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-sm text-un-muted">
+          No source documents attached yet.
+        </p>
+      )}
+    </div>
   );
 }
