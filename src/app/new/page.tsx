@@ -21,6 +21,7 @@ import {
   listSurveyTemplates,
   markInviteSent,
   saveRecord,
+  sendInvite,
   type AarOverview as OverviewState,
   type AarRecord,
   type DocumentSource,
@@ -487,6 +488,8 @@ function NewReviewWorkspace() {
   }
 
   const [copiedInviteId, setCopiedInviteId] = useState<string | null>(null);
+  const [sendingInviteId, setSendingInviteId] = useState<string | null>(null);
+  const [sendInviteError, setSendInviteError] = useState<string | null>(null);
 
   async function copyInviteLink(id: string) {
     const link = `${window.location.origin}/respond/${id}`;
@@ -501,6 +504,21 @@ function NewReviewWorkspace() {
     const updated = await markInviteSent(id);
     if (updated) {
       setInvites((prev) => prev.map((i) => (i.id === id ? updated : i)));
+    }
+  }
+
+  async function handleSendInvite(id: string) {
+    setSendInviteError(null);
+    setSendingInviteId(id);
+    const link = `${window.location.origin}/respond/${id}`;
+    const aarTitle =
+      savedTitle || (overview.country ? `${overview.country} — ${overview.crisisType}` : "Untitled AAR");
+    const result = await sendInvite(id, { surveyLink: link, aarTitle });
+    setSendingInviteId(null);
+    if (result.ok) {
+      setInvites((prev) => prev.map((i) => (i.id === id ? result.invite : i)));
+    } else {
+      setSendInviteError(`Couldn't send to this invite: ${result.error} Try "Copy link" instead.`);
     }
   }
 
@@ -1238,6 +1256,12 @@ function NewReviewWorkspace() {
                 + Add to invite list
               </button>
 
+              {sendInviteError && (
+                <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 ring-1 ring-red-200">
+                  {sendInviteError}
+                </p>
+              )}
+
               {invites.length > 0 && (
                 <div className="mt-5">
                   <div className="flex items-center justify-between">
@@ -1285,14 +1309,22 @@ function NewReviewWorkspace() {
                               ) : null}
                               <button
                                 type="button"
-                                onClick={() => copyInviteLink(invite.id)}
-                                className="rounded-full bg-un-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-un-blue-700"
+                                onClick={() => handleSendInvite(invite.id)}
+                                disabled={sendingInviteId === invite.id}
+                                className="rounded-full bg-un-blue-600 px-3 py-1 text-xs font-semibold text-white hover:bg-un-blue-700 disabled:cursor-not-allowed disabled:opacity-60"
                               >
-                                {copiedInviteId === invite.id
-                                  ? "Link copied!"
+                                {sendingInviteId === invite.id
+                                  ? "Sending…"
                                   : invite.status === "Draft"
-                                    ? "Copy link"
-                                    : "Copy link again"}
+                                    ? "Send email"
+                                    : "Resend email"}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => copyInviteLink(invite.id)}
+                                className="rounded-full border border-un-border px-3 py-1 text-xs font-semibold text-un-blue-700 hover:bg-un-blue-50"
+                              >
+                                {copiedInviteId === invite.id ? "Link copied!" : "Copy link"}
                               </button>
                               <button
                                 type="button"

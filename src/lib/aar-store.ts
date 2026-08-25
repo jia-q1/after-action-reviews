@@ -166,6 +166,22 @@ export async function markInviteSent(id: string): Promise<SurveyInvite | undefin
   return (await res.json()) as SurveyInvite;
 }
 
+export async function sendInvite(
+  id: string,
+  input: { surveyLink: string; aarTitle: string },
+): Promise<{ ok: true; invite: SurveyInvite } | { ok: false; error: string }> {
+  const res = await fetch(`/api/invites/${encodeURIComponent(id)}/send`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    return { ok: false, error: body.error ?? "Failed to send." };
+  }
+  return { ok: true, invite: (await res.json()) as SurveyInvite };
+}
+
 export async function deleteInvite(id: string): Promise<void> {
   await fetch(`/api/invites/${encodeURIComponent(id)}`, { method: "DELETE" });
 }
