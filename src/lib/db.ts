@@ -135,32 +135,32 @@ async function ensureSchema(): Promise<void> {
         }
       }
 
-      const { rows: templateRows } = await sql<{ count: string }>`
-        SELECT COUNT(*)::text AS count FROM survey_templates
-      `;
-      if (Number(templateRows[0].count) === 0) {
-        const now = new Date().toISOString();
-        for (const template of seedSurveyTemplates) {
-          const record: SurveyTemplateRecord = {
-            id: template.id,
-            name: template.name,
-            audience: template.audience,
-            description: template.description,
-            informsSections: template.informsSections,
-            suggestedRoles: template.suggestedRoles,
-            questions: template.questions.map((text, index) => ({
-              id: `${template.id}-q${index + 1}`,
-              text,
-              order: index,
-            })),
-            updatedAt: now,
-          };
-          await sql`
-            INSERT INTO survey_templates (id, updated_at, data)
-            VALUES (${record.id}, ${record.updatedAt}, ${JSON.stringify(record)}::jsonb)
-            ON CONFLICT (id) DO NOTHING
-          `;
-        }
+      // Unlike reviews, templates have no live-editing UI -- data/reviews.ts
+      // is the sole source of truth. Re-sync on every fresh server process
+      // (delete, then reinsert from the current code) instead of seeding
+      // once and leaving stale rows behind when questions change or a
+      // template is removed.
+      await sql`DELETE FROM survey_templates`;
+      const now = new Date().toISOString();
+      for (const template of seedSurveyTemplates) {
+        const record: SurveyTemplateRecord = {
+          id: template.id,
+          name: template.name,
+          audience: template.audience,
+          description: template.description,
+          informsSections: template.informsSections,
+          suggestedRoles: template.suggestedRoles,
+          questions: template.questions.map((text, index) => ({
+            id: `${template.id}-q${index + 1}`,
+            text,
+            order: index,
+          })),
+          updatedAt: now,
+        };
+        await sql`
+          INSERT INTO survey_templates (id, updated_at, data)
+          VALUES (${record.id}, ${record.updatedAt}, ${JSON.stringify(record)}::jsonb)
+        `;
       }
     })();
   }

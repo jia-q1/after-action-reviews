@@ -71,13 +71,9 @@ export const crisisResponseDimensions = [
   "Effectiveness of Crisis Communication and Resource Mobilization",
 ] as const;
 
-// Survey templates for gathering AAR input from different audiences. The
-// official AAR report template (Annex 4) names "interview/survey/focus
-// group questions" as a required annex but leaves the questions themselves
-// blank, so the question sets below are a drafted starting point — inferred
-// from the report's 3.1-3.9 structure and standard AAR practice, not
-// sourced from the template. Treat them as a first draft to be reviewed
-// before real use.
+// Survey templates for gathering AAR input from different audiences, one
+// per Unit option (see inviteUnits above), organized around the six
+// crisis response dimensions.
 export type SurveyTemplate = {
   id: string;
   name: string;
@@ -91,88 +87,79 @@ export type SurveyTemplate = {
   suggestedRoles: string[];
 };
 
+// Four closing questions shared across most of the internal-audience
+// templates below.
+const COMMON_CLOSING_QUESTIONS = [
+  "Were there any delays or ambiguities in approvals or guidance that impacted implementation?",
+  "What is the one change that would have made the biggest difference to your work during this response?",
+  "Walk through the first two weeks of the response from your perspective — what stands out?",
+  "What recommendations would you make to: Crisis Bureau, Regional Bureau, Country Office, SURGE mechanism, BERA, BMS and BPPS?",
+];
+
 export const surveyTemplates: SurveyTemplate[] = [
   {
-    id: "response-team-debrief",
-    name: "Response Team Debrief",
-    audience: "Country Office staff directly involved in the response",
+    id: "rr-drr",
+    name: "RR / DRR Reflection",
+    audience: "Resident Representative / Deputy Resident Representative",
     description:
-      "Day-to-day account of what worked, what didn't, and where delivery hit friction.",
-    informsSections: ["Operational Response", "Programmatic Response", "Deployments"],
-    questions: [
-      "What was your role during the response, and roughly how long were you actively involved?",
-      "How clear and timely were the decisions that shaped your day-to-day work — did you know what to prioritize and when, or was there confusion early on?",
-      "What programmatic activities had the strongest results, and how well did access to corporate funds (e.g. TRAC3, Immediate Response Facility) keep pace with what was needed on the ground?",
-      "Where did operational processes — staffing and surge deployment, procurement, other operations support — create delays, and where did they work well?",
-      "If experts or surge personnel were deployed, how well did their arrival align with when they were actually needed?",
-      "What is the one change that would have made the biggest difference to your work during this response?",
-    ],
-    suggestedRoles: [
-      "Operations Manager",
-      "Operations Specialist",
-      "Programme Analyst",
-      "Project Analyst",
-    ],
-  },
-  {
-    id: "leadership-reflection",
-    name: "Leadership & Management Reflection",
-    audience: "Resident Rep / Deputy Rep / senior management",
-    description:
-      "Corporate mechanisms, resourcing decisions, and strategic coordination calls.",
+      "Strategic decision-making, corporate support, programme and funding, operations, coordination, and institutional learning from the most senior in-country perspective.",
     informsSections: [
       "Corporate Response Mechanisms",
       "Country Office Response Structure and Capacities",
+      "Programmatic Response",
+      "Operational Response",
+      "Coordination",
       "Communication and Resource Mobilization",
     ],
     questions: [
-      "How clear and timely was decision-making about the response overall — Crisis Board activation, early strategic calls, trade-offs — and where did it fall short?",
-      "How much did needs assessments, situation reports, or other evidence actually drive decisions and programming choices, versus decisions being made without solid data?",
-      "Did the Country Office have the structure and standing capacity it needed at the moment the crisis hit? What was missing, if anything?",
-      "How effective was resource mobilization (donor engagement, appeals, internal funding) and crisis communication in meeting the response's needs?",
-      "What corporate policies, procedures, or systems helped — or got in the way — during this response?",
-      "Looking back, what would you do differently if a similar crisis happened again next year?",
+      // Decision-Making and Corporate Support
+      "How would you assess UNDP's overall response during the early stages of the crisis? What worked well and what could have been faster or better?",
+      "What were the most important decisions you had to make during the early stages of the crisis? Were there any decisions that were difficult or delayed?",
+      "How timely and useful were the early assessments and analysis in informing UNDP's programme response and strategic positioning during the crisis?",
+      "Did you receive the support you needed from the Regional Bureau, Crisis Bureau and other HQ teams? What support was most useful, and where were the main gaps?",
+      "Did UNDP's corporate policies and crisis procedures help you respond, or were there areas where they made the response more difficult?",
+      // Programme and Funding
+      "To what extent were corporate tools and funding (e.g., TRAC 3, SURGE deployments) accessed and used effectively?",
+      "How well was the Country Office able to adapt its programmes to respond to the crisis and emerging needs?",
+      "Did corporate funding come at the right time and help the Country Office respond to its priorities? Where were the main gaps, if any?",
+      // Operational Response
+      "Did the Country Office have the staff and operational capacity it needed to respond to the crisis? What were the main gaps?",
+      "How useful and timely was SURGE support and Special Measures to the Country Office? What worked well and what could be improved?",
+      "How well were staff wellbeing and duty of care supported during the crisis? What could have been done differently?",
+      // Interagency Coordination
+      "How effective was UNDP's engagement with: a) UNCT; b) HCT; c) Other UN Agencies; d) Government counterparts; e) Civil society partners — what worked well, what didn't work so well?",
+      "To what extent did UNDP successfully position itself within the humanitarian-development-peace nexus? (To a great extent / To some extent / To a limited extent / Not at all.) Please explain your answer.",
+      "How effective was UNDP's role in Early Recovery Discussions and Coordination? Please specify the value added and challenges faced.",
+      "What lessons should be carried forward regarding coordination and partnerships?",
+      // Communication and Resource Mobilization
+      "How effective was UNDP in communicating its role and priorities during the crisis — with partners, donors and externally?",
+      "How successful was UNDP in mobilizing the resources needed for the response? What helped or made resource mobilization difficult?",
+      // Institutional Learning
+      "What were the key enablers that contributed to a successful response, looking at mechanisms for information sharing, coordination, defining UNDP's offer and resource mobilization strategy?",
+      "What were the main bottlenecks that limited UNDP's ability to respond more quickly or effectively?",
+      "Were there examples of effective collaboration that can be replicated in future responses?",
+      "What processes or capacities need to be improved for future crisis readiness in your Country Office?",
+      "What recommendations would you make to: Crisis Bureau, Regional Bureau, SURGE mechanism, BERA, BMS and BPPS?",
     ],
     suggestedRoles: [
       "Resident Representative",
       "Former Resident Representative",
       "Deputy Resident Representative",
       "Assistant Resident Representative",
-      "Regional Advisor",
     ],
   },
   {
-    id: "partner-coordination",
-    name: "Partner & Coordination Feedback",
-    audience: "External partners, cluster leads, government counterparts",
+    id: "co-programmes",
+    name: "CO Programmes Team",
+    audience: "Country Office Programme Team",
     description:
-      "How coordination and joint planning looked from outside UNDP.",
-    informsSections: ["Coordination", "Communication and Resource Mobilization"],
+      "How the programme adapted to the crisis, and where approvals or guidance created friction.",
+    informsSections: ["Programmatic Response"],
     questions: [
-      "How would you describe UNDP's engagement in interagency coordination structures (cluster meetings, joint planning forums) during this response?",
-      "Was UNDP's role and added value in the response clear to your organization?",
-      "How timely and effective was UNDP's crisis communication with your organization throughout the response?",
-      "Were there moments where better interagency coordination with UNDP could have improved outcomes for affected communities? Please describe.",
-      "How would you rate joint planning and information-sharing with UNDP overall? (1–5)",
-      "What would most improve UNDP's coordination and communication with partners like yours in a future response?",
-    ],
-    // External audience — the CO / Regional / HQ role titles on file don't
-    // apply here, so no suggestions are offered; the field stays free text.
-    suggestedRoles: [],
-  },
-  {
-    id: "field-frontline",
-    name: "Field / Frontline Staff Check-in",
-    audience: "Field-based and frontline delivery staff",
-    description:
-      "Ground-level experience of programmatic delivery and community response.",
-    informsSections: ["Programmatic Response", "Operational Response"],
-    questions: [
-      "What was your day-to-day experience delivering activities during the response, and how timely and effective was the programmatic support you received?",
-      "What resources, supplies, staffing, or approvals arrived late — and how did that affect your work?",
-      "How did affected communities respond to the assistance provided? Any notable feedback, positive or negative?",
-      "Were you clear on your role, reporting lines, and who to contact for urgent issues?",
-      "What one thing would make frontline delivery and operational support smoother next time?",
+      "How effectively was UNDP able to adapt existing programmes to the evolving crisis context?",
+      "Was UNDP able to play the role it should have played in early recovery? What worked well and where could UNDP have done more?",
+      "Were there examples of particularly innovative or adaptive programming?",
+      ...COMMON_CLOSING_QUESTIONS,
     ],
     suggestedRoles: [
       "Programme Specialist",
@@ -180,6 +167,103 @@ export const surveyTemplates: SurveyTemplate[] = [
       "Project Analyst",
       "Programme Analyst",
     ],
+  },
+  {
+    id: "co-operations",
+    name: "CO Operations Team",
+    audience: "Country Office Operations Team",
+    description:
+      "Staffing, procurement, finance, security, and business continuity during the response.",
+    informsSections: ["Operational Response", "Deployments"],
+    questions: [
+      "Where did operational processes (procurement, logistics, HR, finance) create delays or bottlenecks?",
+      "How effective were UNDP's operational arrangements during the crisis? Please comment on: a) Staffing; b) Procurement; c) Finance; d) Security; e) Business continuity.",
+      "How useful were the special measures activated under the crisis response framework?",
+      ...COMMON_CLOSING_QUESTIONS,
+    ],
+    suggestedRoles: ["Operations Manager", "Operations Specialist", "Operations Analyst"],
+  },
+  {
+    id: "co-resource-mobilization",
+    name: "CO Resource Mobilization, Partnerships and Communication",
+    audience:
+      "Country Office Resource Mobilization, Partnerships and Communication",
+    description:
+      "How the Crisis Response Plan, positioning, and crisis communication supported resource mobilization.",
+    informsSections: ["Communication and Resource Mobilization"],
+    questions: [
+      "In what ways did the Crisis Response Plan support the resource mobilization process?",
+      "In what ways did UNDP's positioning allow or support resource mobilization?",
+      "How effective was UNDP's crisis communication response? (Very Effective / Somewhat Effective / Neither Effective nor Ineffective / Somewhat Ineffective / Very Ineffective.)",
+      "What aspects of the communications response worked particularly well?",
+      "What communications challenges were encountered?",
+      "How effectively were assessments and evidence used for advocacy and resource mobilization?",
+      "Based on your understanding, what financial resources were mobilized for the crisis response?",
+      "What factors helped or hindered fundraising efforts?",
+      "What lessons should be institutionalized regarding communications and resource mobilization?",
+      ...COMMON_CLOSING_QUESTIONS,
+    ],
+    suggestedRoles: [
+      "Partnerships Specialist",
+      "Resource Mobilization Specialist",
+      "Communications Analyst",
+      "Communications Specialist",
+    ],
+  },
+  {
+    id: "co-gender",
+    name: "CO Gender Team",
+    audience: "Country Office Gender focal point",
+    description:
+      "How well gender considerations were integrated into the crisis response and programming.",
+    informsSections: ["Programmatic Response", "Country Office Response Structure and Capacities"],
+    questions: [
+      "To what extent were gender considerations integrated into the crisis response? (Strongly Integrated / Moderately Integrated / Limited Integrated / Not Integrated.) Please explain.",
+      "Please provide examples of good practices in gender integration in crisis response.",
+      "What improvements are needed to strengthen gender-responsive crisis programming?",
+      "Do you feel the response adequately addressed the different needs of women and men affected by the crisis?",
+      ...COMMON_CLOSING_QUESTIONS,
+    ],
+    suggestedRoles: ["Gender Specialist", "Gender Focal Point", "Gender Analyst"],
+  },
+  {
+    id: "cb-c3rt",
+    name: "CB (C3RT)",
+    audience:
+      "Crisis Bureau (C3RT) — Regional focal points, Deployments Team, Operations Lab",
+    description:
+      "Corporate-level operational support, deployments, and cross-response best practices from the Crisis Bureau.",
+    informsSections: ["Corporate Response Mechanisms", "Deployments", "Operational Response"],
+    questions: [
+      "How effective were UNDP's operational arrangements during the crisis? Please comment on: a) Staffing; b) Procurement; c) Finance; d) Security; e) Business continuity, and provide examples/type of operational support.",
+      "What type of support was provided to the Country Office in terms of deployments, and for how long?",
+      "What are the best practices that worked well during the crisis response across different dimensions (effectiveness and timeliness, coordination, resource mobilization, positioning and partnerships)?",
+      ...COMMON_CLOSING_QUESTIONS,
+    ],
+    suggestedRoles: [
+      "Regional Crisis Advisor",
+      "Crisis Bureau Advisor",
+      "Deployments Officer",
+      "Operations Lab Advisor",
+    ],
+  },
+  {
+    id: "surge-advisors",
+    name: "SURGE Advisors",
+    audience: "SURGE Advisors deployed to the response",
+    description:
+      "The SURGE deployment experience — fit, timeliness, integration, and what to improve.",
+    informsSections: ["Deployments"],
+    questions: [
+      "What was your primary role during the SURGE deployment?",
+      "Was your deployment in person, virtual, or a hybrid?",
+      "How well did your assignment match the needs of the Country Office?",
+      "How would you assess the timeliness of your deployment?",
+      "How well were you integrated into the Country Office team?",
+      "What worked well and what could be improved for future SURGE deployments?",
+      ...COMMON_CLOSING_QUESTIONS,
+    ],
+    suggestedRoles: ["SURGE Advisor", "Deployed Expert"],
   },
 ];
 
