@@ -69,7 +69,6 @@ const EMPTY_OVERVIEW: OverviewState = {
   country: "",
   crisisName: "",
   crisisType: crisisTypes[0],
-  countryOfficeFocalPoint: "",
   crisisBureauFocalPointRegional: "",
   crisisBureauFocalPointSops: "",
   regionalBureauFocalPoint: "",
@@ -283,7 +282,6 @@ function NewReviewWorkspace() {
           country: record.country,
           crisisName: record.crisisName ?? "",
           crisisType: record.crisisType,
-          countryOfficeFocalPoint: record.countryOfficeFocalPoint ?? "",
           crisisBureauFocalPointRegional: record.crisisBureauFocalPointRegional ?? "",
           crisisBureauFocalPointSops: record.crisisBureauFocalPointSops ?? "",
           regionalBureauFocalPoint: record.regionalBureauFocalPoint ?? "",
@@ -556,7 +554,6 @@ function NewReviewWorkspace() {
       country: ov.country,
       crisisName: ov.crisisName,
       crisisType: ov.crisisType,
-      countryOfficeFocalPoint: ov.countryOfficeFocalPoint,
       crisisBureauFocalPointRegional: ov.crisisBureauFocalPointRegional,
       crisisBureauFocalPointSops: ov.crisisBureauFocalPointSops,
       regionalBureauFocalPoint: ov.regionalBureauFocalPoint,
@@ -884,19 +881,6 @@ function NewReviewWorkspace() {
                   </Field>
                 </div>
                 <div className="space-y-3">
-                  <Field label="Country office focal point">
-                    <input
-                      value={overview.countryOfficeFocalPoint}
-                      onChange={(e) =>
-                        setOverview((o) => ({
-                          ...o,
-                          countryOfficeFocalPoint: e.target.value,
-                        }))
-                      }
-                      placeholder="e.g. Maria Santos"
-                      className="input"
-                    />
-                  </Field>
                   <Field label="Crisis Bureau Focal Point (Regional Team)">
                     <input
                       value={overview.crisisBureauFocalPointRegional}

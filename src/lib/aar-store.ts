@@ -9,7 +9,6 @@ export type AarOverview = {
   country: string;
   crisisName: string;
   crisisType: CrisisType;
-  countryOfficeFocalPoint: string;
   crisisBureauFocalPointRegional: string;
   crisisBureauFocalPointSops: string;
   regionalBureauFocalPoint: string;
