@@ -46,6 +46,31 @@ export const priorityLevels: PriorityLevel[] = [
   "Low",
 ];
 
+// Options for a survey invite's "Unit" field. "Other" is handled
+// separately in the UI (a free-typed fallback), same pattern as
+// crisisTypes.
+export const inviteUnits = [
+  "UNDP Country Office RR/DRR",
+  "UNDP Country Office Programme Team",
+  "UNDP Country Office Operations Team",
+  "CO Resource Mobilization, Partnerships and Communication",
+  "CO Gender focal point",
+  "CB (Regional focal point, Deployments Team, Operations Lab)",
+  "SURGE Advisor",
+  "Regional Bureau",
+] as const;
+
+// The six crisis response dimensions the survey questionnaires are built
+// around, aligned to how the Crisis Bureau evaluates a response.
+export const crisisResponseDimensions = [
+  "Overall Clarity and Timeliness of Decision Making for the Response",
+  "Use of Evidence to Inform Decision Making and Programming (Data and Assessments usage)",
+  "Timeliness and Effectiveness of Programmatic response and the use of Corporate Funds",
+  "Effectiveness of the Operational Response (Staffing capacity, SURGE, Procurement, Operations)",
+  "Interagency Coordination",
+  "Effectiveness of Crisis Communication and Resource Mobilization",
+] as const;
+
 // Survey templates for gathering AAR input from different audiences. The
 // official AAR report template (Annex 4) names "interview/survey/focus
 // group questions" as a required annex but leaves the questions themselves
@@ -76,11 +101,10 @@ export const surveyTemplates: SurveyTemplate[] = [
     informsSections: ["Operational Response", "Programmatic Response", "Deployments"],
     questions: [
       "What was your role during the response, and roughly how long were you actively involved?",
-      "Walk through the first two weeks of the response from your perspective — what stands out?",
-      "What worked well in how the Country Office mobilized and organized its response?",
-      "Where did operational processes (procurement, logistics, HR, finance) create delays or bottlenecks?",
+      "How clear and timely were the decisions that shaped your day-to-day work — did you know what to prioritize and when, or was there confusion early on?",
+      "What programmatic activities had the strongest results, and how well did access to corporate funds (e.g. TRAC3, Immediate Response Facility) keep pace with what was needed on the ground?",
+      "Where did operational processes — staffing and surge deployment, procurement, other operations support — create delays, and where did they work well?",
       "If experts or surge personnel were deployed, how well did their arrival align with when they were actually needed?",
-      "What programmatic activities had the strongest results, and why?",
       "What is the one change that would have made the biggest difference to your work during this response?",
     ],
     suggestedRoles: [
@@ -102,10 +126,10 @@ export const surveyTemplates: SurveyTemplate[] = [
       "Communication and Resource Mobilization",
     ],
     questions: [
-      "How would you assess the speed and adequacy of corporate support (Crisis Board activation, funding, roster deployment) once the crisis began?",
+      "How clear and timely was decision-making about the response overall — Crisis Board activation, early strategic calls, trade-offs — and where did it fall short?",
+      "How much did needs assessments, situation reports, or other evidence actually drive decisions and programming choices, versus decisions being made without solid data?",
       "Did the Country Office have the structure and standing capacity it needed at the moment the crisis hit? What was missing, if anything?",
-      "How were priorities and trade-offs decided in the first month, and by whom?",
-      "How effective was resource mobilization (donor engagement, appeals, internal funding) in meeting the response's needs?",
+      "How effective was resource mobilization (donor engagement, appeals, internal funding) and crisis communication in meeting the response's needs?",
       "What corporate policies, procedures, or systems helped — or got in the way — during this response?",
       "Looking back, what would you do differently if a similar crisis happened again next year?",
     ],
@@ -125,12 +149,12 @@ export const surveyTemplates: SurveyTemplate[] = [
       "How coordination and joint planning looked from outside UNDP.",
     informsSections: ["Coordination", "Communication and Resource Mobilization"],
     questions: [
-      "How would you describe UNDP's engagement in coordination structures (cluster meetings, joint planning forums) during this response?",
+      "How would you describe UNDP's engagement in interagency coordination structures (cluster meetings, joint planning forums) during this response?",
       "Was UNDP's role and added value in the response clear to your organization?",
-      "How timely and useful was communication from UNDP throughout the response?",
-      "Were there moments where better coordination with UNDP could have improved outcomes for affected communities? Please describe.",
+      "How timely and effective was UNDP's crisis communication with your organization throughout the response?",
+      "Were there moments where better interagency coordination with UNDP could have improved outcomes for affected communities? Please describe.",
       "How would you rate joint planning and information-sharing with UNDP overall? (1–5)",
-      "What would most improve UNDP's coordination with partners like yours in a future response?",
+      "What would most improve UNDP's coordination and communication with partners like yours in a future response?",
     ],
     // External audience — the CO / Regional / HQ role titles on file don't
     // apply here, so no suggestions are offered; the field stays free text.
@@ -144,11 +168,11 @@ export const surveyTemplates: SurveyTemplate[] = [
       "Ground-level experience of programmatic delivery and community response.",
     informsSections: ["Programmatic Response", "Operational Response"],
     questions: [
-      "What was your day-to-day experience delivering activities during the response?",
-      "What resources, supplies, or approvals arrived late — and how did that affect your work?",
+      "What was your day-to-day experience delivering activities during the response, and how timely and effective was the programmatic support you received?",
+      "What resources, supplies, staffing, or approvals arrived late — and how did that affect your work?",
       "How did affected communities respond to the assistance provided? Any notable feedback, positive or negative?",
       "Were you clear on your role, reporting lines, and who to contact for urgent issues?",
-      "What one thing would make frontline delivery smoother next time?",
+      "What one thing would make frontline delivery and operational support smoother next time?",
     ],
     suggestedRoles: [
       "Programme Specialist",

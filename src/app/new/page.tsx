@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import {
   crisisTypes,
   dataCollectionMethods,
+  inviteUnits,
   type CrisisType,
   type FindingRow,
   type Interviewee,
@@ -90,6 +91,7 @@ const EMPTY_INVITE_FORM = {
   name: "",
   role: "",
   unit: "",
+  undpOffice: "",
   email: "",
   templateId: "",
 };
@@ -230,6 +232,7 @@ function NewReviewWorkspace() {
   const [templates, setTemplates] = useState<SurveyTemplate[]>([]);
   const [invites, setInvites] = useState<SurveyInvite[]>([]);
   const [inviteForm, setInviteForm] = useState(EMPTY_INVITE_FORM);
+  const [unitIsOther, setUnitIsOther] = useState(false);
 
   const [documents, setDocuments] = useState<DocumentSource[]>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -489,6 +492,7 @@ function NewReviewWorkspace() {
       }
     }
     setInviteForm((f) => ({ ...EMPTY_INVITE_FORM, templateId: f.templateId }));
+    setUnitIsOther(false);
   }
 
   async function removeInvite(id: string) {
@@ -538,7 +542,7 @@ function NewReviewWorkspace() {
         .map((invite) => ({
           name: invite.name,
           title: invite.role,
-          agency: invite.unit,
+          agency: invite.undpOffice || invite.unit,
         }));
       return [...prev, ...additions];
     });
@@ -1224,13 +1228,49 @@ function NewReviewWorkspace() {
                       </p>
                     )}
                 </Field>
-                <Field label="Unit / office">
+                <Field label="Unit">
+                  <select
+                    value={unitIsOther ? "Other" : inviteForm.unit}
+                    onChange={(e) => {
+                      if (e.target.value === "Other") {
+                        setUnitIsOther(true);
+                        setInviteForm((f) => ({ ...f, unit: "" }));
+                      } else {
+                        setUnitIsOther(false);
+                        setInviteForm((f) => ({ ...f, unit: e.target.value }));
+                      }
+                    }}
+                    className="input"
+                  >
+                    <option value="" disabled>
+                      Select a unit
+                    </option>
+                    {inviteUnits.map((u) => (
+                      <option key={u} value={u}>
+                        {u}
+                      </option>
+                    ))}
+                    <option value="Other">Other</option>
+                  </select>
+                  {unitIsOther && (
+                    <input
+                      value={inviteForm.unit}
+                      onChange={(e) =>
+                        setInviteForm((f) => ({ ...f, unit: e.target.value }))
+                      }
+                      placeholder="Describe the unit"
+                      className="input mt-2"
+                      autoFocus
+                    />
+                  )}
+                </Field>
+                <Field label="UNDP Office">
                   <input
-                    value={inviteForm.unit}
+                    value={inviteForm.undpOffice}
                     onChange={(e) =>
-                      setInviteForm((f) => ({ ...f, unit: e.target.value }))
+                      setInviteForm((f) => ({ ...f, undpOffice: e.target.value }))
                     }
-                    placeholder="e.g. Philippines Country Office"
+                    placeholder="e.g. UNDP Philippines"
                     className="input"
                   />
                 </Field>

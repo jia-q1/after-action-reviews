@@ -17,6 +17,7 @@ export async function POST(request: Request) {
     name: string;
     role: string;
     unit: string;
+    undpOffice: string;
     email: string;
   };
   if (!body.reviewSlug || !body.templateId || !body.name || !body.email) {

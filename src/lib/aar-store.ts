@@ -125,6 +125,7 @@ export type SurveyInvite = {
   name: string;
   role: string;
   unit: string;
+  undpOffice: string;
   email: string;
   status: InviteStatus;
   answers: Record<string, string> | null;
@@ -148,6 +149,7 @@ export async function createInvite(input: {
   name: string;
   role: string;
   unit: string;
+  undpOffice: string;
   email: string;
 }): Promise<SurveyInvite | undefined> {
   const res = await fetch("/api/invites", {

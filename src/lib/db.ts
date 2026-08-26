@@ -47,6 +47,7 @@ export type SurveyInviteRecord = {
   name: string;
   role: string;
   unit: string;
+  undpOffice: string;
   email: string;
   status: InviteStatus;
   answers: Record<string, string> | null;
@@ -256,7 +257,14 @@ type SurveyInviteRow = {
   created_at: string;
   sent_at: string | null;
   responded_at: string | null;
-  data: { name: string; role: string; unit: string; email: string; answers: Record<string, string> | null };
+  data: {
+    name: string;
+    role: string;
+    unit: string;
+    undpOffice?: string;
+    email: string;
+    answers: Record<string, string> | null;
+  };
 };
 
 function rowToInvite(row: SurveyInviteRow): SurveyInviteRecord {
@@ -268,6 +276,7 @@ function rowToInvite(row: SurveyInviteRow): SurveyInviteRecord {
     name: row.data.name,
     role: row.data.role,
     unit: row.data.unit,
+    undpOffice: row.data.undpOffice ?? "",
     email: row.data.email,
     answers: row.data.answers,
     sentAt: row.sent_at,
@@ -302,6 +311,7 @@ export async function createInvite(input: {
   name: string;
   role: string;
   unit: string;
+  undpOffice: string;
   email: string;
 }): Promise<SurveyInviteRecord> {
   await ensureSchema();
@@ -311,6 +321,7 @@ export async function createInvite(input: {
     name: input.name,
     role: input.role,
     unit: input.unit,
+    undpOffice: input.undpOffice,
     email: input.email,
     answers: null,
   };
@@ -326,6 +337,7 @@ export async function createInvite(input: {
     name: input.name,
     role: input.role,
     unit: input.unit,
+    undpOffice: input.undpOffice,
     email: input.email,
     answers: null,
     sentAt: null,
@@ -358,6 +370,7 @@ export async function submitInviteResponse(
     name: existing.name,
     role: existing.role,
     unit: existing.unit,
+    undpOffice: existing.undpOffice,
     email: existing.email,
     answers,
   };
