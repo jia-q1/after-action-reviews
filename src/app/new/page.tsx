@@ -67,9 +67,11 @@ If a source document includes personal details about individuals or vulnerable g
 
 const EMPTY_OVERVIEW: OverviewState = {
   country: "",
+  crisisName: "",
   crisisType: crisisTypes[0],
   countryOfficeFocalPoint: "",
-  crisisBureauFocalPoint: "",
+  crisisBureauFocalPointRegional: "",
+  crisisBureauFocalPointSops: "",
   regionalBureauFocalPoint: "",
   periodStart: "",
   periodEnd: "",
@@ -77,6 +79,13 @@ const EMPTY_OVERVIEW: OverviewState = {
   leadAuthor: "",
   stage: "Drafting",
 };
+
+// Country + crisis name + year, e.g. "Philippines — Typhoon Mawar — 2026".
+function buildTitle(ov: { country: string; crisisName: string; periodStart: string }): string {
+  const year = ov.periodStart ? ov.periodStart.slice(0, 4) : "";
+  const parts = [ov.country, ov.crisisName, year].filter(Boolean);
+  return parts.length > 0 ? parts.join(" — ") : "Untitled AAR";
+}
 
 const EMPTY_INVITE_FORM = {
   name: "",
@@ -272,9 +281,11 @@ function NewReviewWorkspace() {
         setSavedSummary(record.summary);
         setOverview({
           country: record.country,
+          crisisName: record.crisisName ?? "",
           crisisType: record.crisisType,
           countryOfficeFocalPoint: record.countryOfficeFocalPoint ?? "",
-          crisisBureauFocalPoint: record.crisisBureauFocalPoint ?? "",
+          crisisBureauFocalPointRegional: record.crisisBureauFocalPointRegional ?? "",
+          crisisBureauFocalPointSops: record.crisisBureauFocalPointSops ?? "",
           regionalBureauFocalPoint: record.regionalBureauFocalPoint ?? "",
           periodStart: record.periodStart,
           periodEnd: record.periodEnd,
@@ -511,8 +522,7 @@ function NewReviewWorkspace() {
     setSendInviteError(null);
     setSendingInviteId(id);
     const link = `${window.location.origin}/respond/${id}`;
-    const aarTitle =
-      savedTitle || (overview.country ? `${overview.country} — ${overview.crisisType}` : "Untitled AAR");
+    const aarTitle = savedTitle || buildTitle(overview);
     const result = await sendInvite(id, { surveyLink: link, aarTitle });
     setSendingInviteId(null);
     if (result.ok) {
@@ -544,13 +554,13 @@ function NewReviewWorkspace() {
     return {
       slug,
       country: ov.country,
+      crisisName: ov.crisisName,
       crisisType: ov.crisisType,
       countryOfficeFocalPoint: ov.countryOfficeFocalPoint,
-      crisisBureauFocalPoint: ov.crisisBureauFocalPoint,
+      crisisBureauFocalPointRegional: ov.crisisBureauFocalPointRegional,
+      crisisBureauFocalPointSops: ov.crisisBureauFocalPointSops,
       regionalBureauFocalPoint: ov.regionalBureauFocalPoint,
-      title:
-        savedTitle ||
-        (ov.country ? `${ov.country} — ${ov.crisisType}` : "Untitled AAR"),
+      title: savedTitle || buildTitle(ov),
       summary: savedSummary || draft.executiveSummary.slice(0, 220),
       status: opts?.status ?? recordStatus,
       stage: ov.stage,
@@ -851,16 +861,28 @@ function NewReviewWorkspace() {
           <div className="mx-auto mt-8 max-w-xl">
             <Panel title="AAR basics">
               <div className="space-y-3">
-                <Field label="Country / crisis name">
-                  <input
-                    value={overview.country}
-                    onChange={(e) =>
-                      setOverview((o) => ({ ...o, country: e.target.value }))
-                    }
-                    placeholder="e.g. Philippines"
-                    className="input"
-                  />
-                </Field>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Country name(s)">
+                    <input
+                      value={overview.country}
+                      onChange={(e) =>
+                        setOverview((o) => ({ ...o, country: e.target.value }))
+                      }
+                      placeholder="e.g. Philippines, or Chad, Cameroon"
+                      className="input"
+                    />
+                  </Field>
+                  <Field label="Name of crisis">
+                    <input
+                      value={overview.crisisName}
+                      onChange={(e) =>
+                        setOverview((o) => ({ ...o, crisisName: e.target.value }))
+                      }
+                      placeholder="e.g. Typhoon Mawar"
+                      className="input"
+                    />
+                  </Field>
+                </div>
                 <div className="space-y-3">
                   <Field label="Country office focal point">
                     <input
@@ -875,16 +897,29 @@ function NewReviewWorkspace() {
                       className="input"
                     />
                   </Field>
-                  <Field label="Crisis bureau focal point">
+                  <Field label="Crisis Bureau Focal Point (Regional Team)">
                     <input
-                      value={overview.crisisBureauFocalPoint}
+                      value={overview.crisisBureauFocalPointRegional}
                       onChange={(e) =>
                         setOverview((o) => ({
                           ...o,
-                          crisisBureauFocalPoint: e.target.value,
+                          crisisBureauFocalPointRegional: e.target.value,
                         }))
                       }
                       placeholder="e.g. Jonas Weber"
+                      className="input"
+                    />
+                  </Field>
+                  <Field label="Crisis Bureau Focal Point (SOPs Custodian)">
+                    <input
+                      value={overview.crisisBureauFocalPointSops}
+                      onChange={(e) =>
+                        setOverview((o) => ({
+                          ...o,
+                          crisisBureauFocalPointSops: e.target.value,
+                        }))
+                      }
+                      placeholder="e.g. Priya Nair"
                       className="input"
                     />
                   </Field>
@@ -903,7 +938,7 @@ function NewReviewWorkspace() {
                   </Field>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Crisis category">
+                  <Field label="Crisis Type">
                     <select
                       value={isOtherCrisisType ? "Other" : overview.crisisType}
                       onChange={(e) =>

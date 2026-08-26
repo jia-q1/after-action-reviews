@@ -7,9 +7,11 @@ import type { CrisisType, Review, ReviewStage, ResponseArea } from "@/data/revie
 
 export type AarOverview = {
   country: string;
+  crisisName: string;
   crisisType: CrisisType;
   countryOfficeFocalPoint: string;
-  crisisBureauFocalPoint: string;
+  crisisBureauFocalPointRegional: string;
+  crisisBureauFocalPointSops: string;
   regionalBureauFocalPoint: string;
   periodStart: string;
   periodEnd: string;

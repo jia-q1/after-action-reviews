@@ -10,12 +10,8 @@ export type ReviewStage =
   | "Under Review";
 export type PriorityLevel = "Very High" | "High" | "Medium" | "Low";
 
-export const crisisTypes = [
-  "Natural Disaster",
-  "Conflict & Displacement",
-  "Public Health Emergency",
-  "Complex Emergency",
-] as const;
+// Aligned to the categories used on the Crisis Tracker Dashboard.
+export const crisisTypes = ["Conflict", "Disaster", "Political", "Epidemic"] as const;
 
 // Widened beyond the preset list so "Other" can carry a custom, free-typed
 // value while the fixed options still autocomplete in editors.
@@ -178,9 +174,11 @@ export type Interviewee = { name: string; title: string; agency: string };
 export type Review = {
   slug: string;
   country: string;
+  crisisName?: string;
   crisisType: CrisisType;
   countryOfficeFocalPoint?: string;
-  crisisBureauFocalPoint?: string;
+  crisisBureauFocalPointRegional?: string;
+  crisisBureauFocalPointSops?: string;
   regionalBureauFocalPoint?: string;
   title: string;
   summary: string;
