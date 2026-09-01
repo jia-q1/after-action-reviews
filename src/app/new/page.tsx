@@ -477,17 +477,24 @@ function NewReviewWorkspace() {
 
     try {
       const added = await Promise.all(
-        readable.map(async (file) => ({
-          id: crypto.randomUUID(),
-          name: file.name,
-          size: file.size,
-          mimeType: file.type || undefined,
-          content: await readFileAsBase64(file),
-        })),
+        readable.map(async (file) => {
+          const res = await fetch("/api/documents", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              reviewSlug: slug,
+              fileName: file.name,
+              mimeType: file.type || undefined,
+              contentBase64: await readFileAsBase64(file),
+            }),
+          });
+          if (!res.ok) throw new Error("upload failed");
+          return (await res.json()) as DocumentSource;
+        }),
       );
       setDocuments((prev) => [...prev, ...added]);
     } catch {
-      setFileError("Couldn't read one of those files. Try attaching it again.");
+      setFileError("Couldn't attach one of those files. Try again.");
     }
   }
 
@@ -501,7 +508,16 @@ function NewReviewWorkspace() {
   }
 
   function removeDocument(id: string) {
+    const doc = documents.find((d) => d.id === id);
     setDocuments((prev) => prev.filter((d) => d.id !== id));
+    if (doc?.sharepointId) {
+      fetch(`/api/documents/${encodeURIComponent(doc.sharepointId)}`, {
+        method: "DELETE",
+      }).catch(() => {
+        // The library file may be orphaned if this fails; not worth
+        // blocking the UI removal over.
+      });
+    }
   }
 
   function setDocumentMethod(id: string, method: string) {

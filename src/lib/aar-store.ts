@@ -21,13 +21,20 @@ export type AarOverview = {
 
 // `content` is the raw file bytes, base64-encoded, so the eventual AI
 // drafting step has something real to read — manually-added sources (no
-// file, just a typed label) have no content.
+// file, just a typed label) have no content. Once the SharePoint document
+// library is configured (see src/lib/document-library.ts), new uploads
+// carry `sharepointId`/`sharepointUrl` instead of `content` — the bytes
+// live in SharePoint, not in this record — so both are optional and a
+// document should only ever have one or the other, never neither (except
+// manually-added, content-less sources).
 export type DocumentSource = {
   id: string;
   name: string;
   size?: number;
   mimeType?: string;
   content?: string;
+  sharepointId?: string;
+  sharepointUrl?: string;
   // How this specific piece of evidence was gathered (desk review, key
   // informant interview, etc.) — a property of the document, not the AAR
   // as a whole, since different sources are gathered different ways.

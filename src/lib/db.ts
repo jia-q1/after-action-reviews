@@ -17,6 +17,17 @@ import {
   type ResponseArea,
 } from "@/data/reviews";
 import type { DocumentSource } from "@/lib/aar-store";
+import {
+  createInviteInList,
+  deleteInviteFromList,
+  getInviteFromList,
+  getSurveyTemplatesFromList,
+  isInvitesListConfigured,
+  isTemplatesListConfigured,
+  listInvitesFromList,
+  markInviteSentInList,
+  submitResponseInList,
+} from "@/lib/microsoft-lists";
 
 export type AarRecord = Review & {
   documents: DocumentSource[];
@@ -135,6 +146,12 @@ async function ensureSchema(): Promise<void> {
         }
       }
 
+      // Once templates live in a SharePoint List, this table is no longer
+      // read at all (see listSurveyTemplates below) -- skip re-syncing it
+      // so we're not spending Postgres transfer maintaining a table
+      // nothing uses.
+      if (isTemplatesListConfigured()) return;
+
       // Unlike reviews, templates have no live-editing UI -- data/reviews.ts
       // is the sole source of truth. Re-sync on every fresh server process
       // (delete, then reinsert from the current code) instead of seeding
@@ -224,6 +241,9 @@ export async function deleteRecord(slug: string): Promise<void> {
 // --- Survey templates -------------------------------------------------
 
 export async function listSurveyTemplates(): Promise<SurveyTemplateRecord[]> {
+  if (isTemplatesListConfigured()) {
+    return getSurveyTemplatesFromList();
+  }
   await ensureSchema();
   const { rows } = await sql<{ data: SurveyTemplateRecord }>`
     SELECT data FROM survey_templates ORDER BY id
@@ -234,6 +254,11 @@ export async function listSurveyTemplates(): Promise<SurveyTemplateRecord[]> {
 export async function getSurveyTemplateById(
   id: string,
 ): Promise<SurveyTemplateRecord | undefined> {
+  if (isTemplatesListConfigured()) {
+    // Only 7 templates exist -- not worth a dedicated "get one" flow.
+    const templates = await getSurveyTemplatesFromList();
+    return templates.find((t) => t.id === id);
+  }
   await ensureSchema();
   const { rows } = await sql<{ data: SurveyTemplateRecord }>`
     SELECT data FROM survey_templates WHERE id = ${id}
@@ -288,6 +313,9 @@ function rowToInvite(row: SurveyInviteRow): SurveyInviteRecord {
 export async function listInvitesForReview(
   reviewSlug: string,
 ): Promise<SurveyInviteRecord[]> {
+  if (isInvitesListConfigured()) {
+    return listInvitesFromList(reviewSlug);
+  }
   await ensureSchema();
   const { rows } = await sql<SurveyInviteRow>`
     SELECT * FROM survey_invites WHERE review_slug = ${reviewSlug} ORDER BY created_at
@@ -298,6 +326,9 @@ export async function listInvitesForReview(
 export async function getInviteById(
   id: string,
 ): Promise<SurveyInviteRecord | undefined> {
+  if (isInvitesListConfigured()) {
+    return getInviteFromList(id);
+  }
   await ensureSchema();
   const { rows } = await sql<SurveyInviteRow>`
     SELECT * FROM survey_invites WHERE id = ${id}
@@ -314,6 +345,9 @@ export async function createInvite(input: {
   undpOffice: string;
   email: string;
 }): Promise<SurveyInviteRecord> {
+  if (isInvitesListConfigured()) {
+    return createInviteInList(input);
+  }
   await ensureSchema();
   const id = crypto.randomUUID();
   const createdAt = new Date().toISOString();
@@ -349,6 +383,9 @@ export async function createInvite(input: {
 export async function markInviteSent(
   id: string,
 ): Promise<SurveyInviteRecord | undefined> {
+  if (isInvitesListConfigured()) {
+    return markInviteSentInList(id);
+  }
   await ensureSchema();
   const sentAt = new Date().toISOString();
   await sql`
@@ -362,6 +399,9 @@ export async function submitInviteResponse(
   id: string,
   answers: Record<string, string>,
 ): Promise<SurveyInviteRecord | undefined> {
+  if (isInvitesListConfigured()) {
+    return submitResponseInList(id, answers);
+  }
   await ensureSchema();
   const existing = await getInviteById(id);
   if (!existing) return undefined;
@@ -383,6 +423,9 @@ export async function submitInviteResponse(
 }
 
 export async function deleteInvite(id: string): Promise<void> {
+  if (isInvitesListConfigured()) {
+    return deleteInviteFromList(id);
+  }
   await ensureSchema();
   await sql`DELETE FROM survey_invites WHERE id = ${id}`;
 }
