@@ -3,21 +3,56 @@ import { GoogleGenAI, Type } from "@google/genai";
 import { responseAreas, priorityLevels } from "@/data/reviews";
 import type { ReportDraft, DocumentSource, SurveyInvite, SurveyTemplate } from "@/lib/aar-store";
 import type { TimelineEntry, FindingRow } from "@/data/reviews";
+import { EXTRACTABLE_MIME_TYPES, extractDocumentText } from "@/lib/document-extraction";
 
 export function isGeminiConfigured(): boolean {
   return Boolean(process.env.GEMINI_API_KEY);
 }
 
-// Gemini can read these natively via inline data. Word/Excel/PowerPoint
-// need text extraction first (mammoth / a spreadsheet parser) -- not
-// wired up yet, so those documents are described by name only for now
-// rather than silently dropped or crashing the request.
-const NATIVELY_READABLE_MIME_TYPES = new Set([
-  "application/pdf",
-  "text/plain",
-  "text/csv",
-  "text/markdown",
-]);
+// Plain text formats are just folded into the prompt text directly (no
+// reason to round-trip them through the Files API). PDF is the one
+// binary format Gemini reads natively -- it goes through the Files API
+// (uploaded once, referenced by URI) rather than inline base64, so
+// attaching several large PDFs doesn't blow past the inline request-size
+// ceiling the way it used to.
+const INLINE_TEXT_MIME_TYPES = new Set(["text/plain", "text/csv", "text/markdown"]);
+const FILE_API_MIME_TYPES = new Set(["application/pdf"]);
+
+async function uploadAndWaitForActive(
+  ai: GoogleGenAI,
+  input: { mimeType: string; data: string; displayName: string },
+): Promise<{ fileUri: string; mimeType: string }> {
+  const buffer = Buffer.from(input.data, "base64");
+  const blob = new Blob([buffer], { type: input.mimeType });
+
+  // Upload is the most network-heavy step here (bigger files = more time
+  // for a transient blip), so it gets one retry rather than failing the
+  // whole document on the first hiccup.
+  let uploaded;
+  try {
+    uploaded = await ai.files.upload({
+      file: blob,
+      config: { mimeType: input.mimeType, displayName: input.displayName },
+    });
+  } catch {
+    uploaded = await ai.files.upload({
+      file: blob,
+      config: { mimeType: input.mimeType, displayName: input.displayName },
+    });
+  }
+
+  let file = uploaded;
+  const deadline = Date.now() + 60_000;
+  while (file.state === "PROCESSING" && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    if (!file.name) break;
+    file = await ai.files.get({ name: file.name });
+  }
+  if (file.state !== "ACTIVE" || !file.uri) {
+    throw new Error(`File "${input.displayName}" did not finish processing (state: ${file.state}).`);
+  }
+  return { fileUri: file.uri, mimeType: file.mimeType ?? input.mimeType };
+}
 
 const DRAFT_FIELDS: (keyof ReportDraft)[] = [
   "executiveSummary",
@@ -112,20 +147,54 @@ export async function generateDraft(input: {
   const ai = new GoogleGenAI({ apiKey });
   const model = process.env.GEMINI_MODEL || "gemini-3.6-flash";
 
-  // Build the document parts: natively-readable files go in as inline
-  // data; anything else (SharePoint-only, or an unsupported format) is
-  // named in the prompt text instead so the model knows it exists but
-  // can't read it, rather than the gap being invisible.
-  const fileParts: { inlineData: { mimeType: string; data: string } }[] = [];
+  // Build the document inputs in parallel: PDFs go through the Files API
+  // (referenced by URI, not inlined -- keeps the actual generateContent
+  // request small regardless of how large or how many PDFs are
+  // attached); plain text is folded straight into the prompt; Word/
+  // Excel/PowerPoint get their text extracted first. Anything else
+  // (SharePoint-only documents with no content, an unsupported format,
+  // or a file that fails to process) is named in the prompt so the model
+  // knows it exists but can't read it, rather than the gap being
+  // invisible or the whole request failing over one bad document.
+  const fileParts: { fileData: { fileUri: string; mimeType: string } }[] = [];
+  const extractedTextBlocks: string[] = [];
   const unreadableDocuments: string[] = [];
-  for (const doc of input.documents) {
-    const mimeType = doc.mimeType ?? "";
-    if (doc.content && NATIVELY_READABLE_MIME_TYPES.has(mimeType)) {
-      fileParts.push({ inlineData: { mimeType, data: doc.content } });
-    } else {
-      unreadableDocuments.push(doc.name);
-    }
-  }
+
+  await Promise.all(
+    input.documents.map(async (doc) => {
+      const mimeType = doc.mimeType ?? "";
+      if (!doc.content) {
+        unreadableDocuments.push(doc.name);
+        return;
+      }
+      try {
+        if (FILE_API_MIME_TYPES.has(mimeType)) {
+          const uploaded = await uploadAndWaitForActive(ai, {
+            mimeType,
+            data: doc.content,
+            displayName: doc.name,
+          });
+          fileParts.push({ fileData: uploaded });
+        } else if (INLINE_TEXT_MIME_TYPES.has(mimeType)) {
+          const text = Buffer.from(doc.content, "base64").toString("utf-8");
+          extractedTextBlocks.push(`--- Document: ${doc.name} ---\n${text}`);
+        } else if (EXTRACTABLE_MIME_TYPES.has(mimeType)) {
+          const buffer = Buffer.from(doc.content, "base64");
+          const text = await extractDocumentText(mimeType, buffer);
+          if (text?.trim()) {
+            extractedTextBlocks.push(`--- Document: ${doc.name} ---\n${text}`);
+          } else {
+            unreadableDocuments.push(doc.name);
+          }
+        } else {
+          unreadableDocuments.push(doc.name);
+        }
+      } catch (err) {
+        console.error(`generateDraft: failed to process document "${doc.name}"`, err);
+        unreadableDocuments.push(doc.name);
+      }
+    }),
+  );
 
   const respondedInvites = input.invites.filter(
     (i) => i.status === "Responded" && i.answers,
@@ -149,6 +218,9 @@ export async function generateDraft(input: {
     input.notes.trim() ? `Notes from the reviewer:\n${input.notes.trim()}` : "",
     unreadableDocuments.length > 0
       ? `Note: the following attached documents could not be read by you (unsupported format or stored externally) -- do not fabricate their content, just be aware they exist and may need manual review: ${unreadableDocuments.join(", ")}.`
+      : "",
+    extractedTextBlocks.length > 0
+      ? `Extracted document text:\n\n${extractedTextBlocks.join("\n\n")}`
       : "",
     surveySections.length > 0
       ? `Survey responses collected:\n\n${surveySections.join("\n\n")}`
