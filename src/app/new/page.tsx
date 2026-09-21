@@ -283,9 +283,11 @@ function NewReviewWorkspace() {
   const [promptOpen, setPromptOpen] = useState(false);
   const [prompt, setPrompt] = useState(DEFAULT_PROMPT);
 
-  const [status, setStatus] = useState<"idle" | "generating" | "ready">(
-    "idle",
-  );
+  const [status, setStatus] = useState<
+    "idle" | "generating" | "ready" | "error"
+  >("idle");
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generateWarning, setGenerateWarning] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
 
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
@@ -695,11 +697,12 @@ function NewReviewWorkspace() {
     router.push("/");
   }
 
-  function handleGenerate() {
-    setStatus("generating");
-    setStep(4);
-    window.setTimeout(() => {
-      const points = splitToPoints(notes);
+  // Offline fallback when AI drafting isn't configured (no GEMINI_API_KEY):
+  // buckets notes and survey answers into each section by keyword match,
+  // same as before real drafting existed. Not shown as an error -- this is
+  // an expected, benign state for an environment without the key set.
+  function buildMockDraft(): Draft {
+    const points = splitToPoints(notes);
       const buckets: Partial<Record<keyof Draft, string[]>> = {};
 
       for (const point of points) {
@@ -772,7 +775,7 @@ function NewReviewWorkspace() {
         "Review each section below against the sources and edit as needed before this moves to validation.",
       );
 
-      setDraft({
+      return {
         executiveSummary: summaryParts.join(" "),
         countrySituation: sectionText(
           "countrySituation",
@@ -826,9 +829,59 @@ function NewReviewWorkspace() {
           "communicationAndResourceMobilization",
           "communication and resource mobilization",
         ),
+      };
+  }
+
+  async function handleGenerate() {
+    setStatus("generating");
+    setStep(4);
+    setGenerateError(null);
+    setGenerateWarning(null);
+
+    // Make sure the DB has what we're about to ask the AI to read --
+    // documents/notes/prompt might only be in local state otherwise.
+    await saveRecord(buildRecord());
+
+    try {
+      const res = await fetch("/api/generate-draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug }),
       });
+
+      if (res.status === 503) {
+        // AI drafting isn't configured -- fall back to the offline mock
+        // rather than blocking the wizard on a missing API key.
+        setDraft(buildMockDraft());
+        setStatus("ready");
+        return;
+      }
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}) as { error?: string });
+        setGenerateError(body.error ?? `Request failed (${res.status})`);
+        setStatus("error");
+        return;
+      }
+
+      const body = (await res.json()) as {
+        draft: Draft & { timeline: TimelineEntry[]; findingsMatrix: FindingRow[] };
+        unreadableDocuments: string[];
+      };
+      const { timeline: aiTimeline, findingsMatrix: aiFindingsMatrix, ...draftFields } = body.draft;
+      setDraft(draftFields);
+      setTimeline(aiTimeline ?? []);
+      setFindingsMatrix(aiFindingsMatrix ?? []);
+      if (body.unreadableDocuments?.length > 0) {
+        setGenerateWarning(
+          `The AI couldn't read: ${body.unreadableDocuments.join(", ")}. Review these documents manually.`,
+        );
+      }
       setStatus("ready");
-    }, 1300);
+    } catch {
+      setGenerateError("Could not reach the AI drafting service.");
+      setStatus("error");
+    }
   }
 
   return (
@@ -1834,8 +1887,28 @@ function NewReviewWorkspace() {
               )}
               {status === "generating" && <GeneratingState />}
 
+              {status === "error" && (
+                <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-red-300 bg-red-50/60 py-16 text-center">
+                  <p className="max-w-sm text-sm text-red-700">
+                    {generateError ?? "Something went wrong generating the draft."}
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleGenerate}
+                    className="rounded-full bg-un-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-un-blue-700"
+                  >
+                    Try again
+                  </button>
+                </div>
+              )}
+
               {status === "ready" && (
                 <div className="space-y-6">
+                  {generateWarning && (
+                    <p className="rounded-lg bg-un-gold-100 px-3 py-2 text-xs text-un-gold-700">
+                      {generateWarning}
+                    </p>
+                  )}
                   {documents.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
                       {documents.map((doc) => (
@@ -2112,7 +2185,11 @@ function StepIndicator({
   );
 }
 
-function StatusPill({ status }: { status: "idle" | "generating" | "ready" }) {
+function StatusPill({
+  status,
+}: {
+  status: "idle" | "generating" | "ready" | "error";
+}) {
   const map = {
     idle: { text: "Waiting for input", cls: "bg-slate-100 text-slate-600" },
     generating: {
@@ -2122,6 +2199,10 @@ function StatusPill({ status }: { status: "idle" | "generating" | "ready" }) {
     ready: {
       text: "Draft ready for edits",
       cls: "bg-un-blue-50 text-un-blue-700",
+    },
+    error: {
+      text: "Draft generation failed",
+      cls: "bg-red-50 text-red-700",
     },
   } as const;
   const s = map[status];
