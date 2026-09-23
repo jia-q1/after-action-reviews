@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
 import { getInviteById, markInviteSent } from "@/lib/db";
 import { sendInviteEmail } from "@/lib/power-automate";
+import { requireAuth } from "@/lib/auth";
 
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  if (!(await requireAuth())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const { id } = await params;
   const { surveyLink, aarTitle } = (await request.json()) as {
     surveyLink: string;

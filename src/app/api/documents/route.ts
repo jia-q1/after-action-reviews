@@ -3,6 +3,7 @@ import {
   isDocumentLibraryConfigured,
   uploadDocumentToLibrary,
 } from "@/lib/document-library";
+import { requireAuth } from "@/lib/auth";
 
 // Approximate decoded byte size of a base64 string, for the size shown in
 // the UI -- doesn't need to be exact.
@@ -12,6 +13,9 @@ function base64ByteSize(base64: string): number {
 }
 
 export async function POST(request: Request) {
+  if (!(await requireAuth())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const body = await request.json();
   const { reviewSlug, fileName, mimeType, contentBase64, dataCollectionMethod } =
     body as {

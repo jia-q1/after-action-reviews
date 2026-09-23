@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
 import { getRecordBySlug, listInvitesForReview, listSurveyTemplates } from "@/lib/db";
 import { generateDraft, isGeminiConfigured } from "@/lib/gemini";
+import { requireAuth } from "@/lib/auth";
 
 // Reads the current record from the DB rather than trusting whatever the
 // client has in memory -- the client should save before calling this, but
 // this way a stale/incomplete client state can't produce a draft that
 // disagrees with what's actually persisted.
 export async function POST(request: Request) {
+  if (!(await requireAuth())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   if (!isGeminiConfigured()) {
     return NextResponse.json(
       { error: "AI drafting isn't configured (GEMINI_API_KEY is unset)." },

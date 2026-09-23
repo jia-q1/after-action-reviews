@@ -3,6 +3,7 @@ import {
   deleteDocumentFromLibrary,
   isDocumentLibraryConfigured,
 } from "@/lib/document-library";
+import { requireAuth } from "@/lib/auth";
 
 // `id` here is the document's sharepointId -- there's nothing to delete
 // server-side for inline (fallback) documents, since those only ever live
@@ -12,6 +13,9 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
+  if (!(await requireAuth())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const { id } = await params;
   if (isDocumentLibraryConfigured()) {
     await deleteDocumentFromLibrary(id);

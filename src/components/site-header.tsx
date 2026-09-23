@@ -1,15 +1,33 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 
 const navLinks = [
   { href: "/", label: "Review Library" },
   { href: "/workspace", label: "AAR Workspace" },
 ];
 
+// Shown on the internal-tool pages -- clicking it when not actually logged
+// in is harmless (it just clears a cookie that isn't set), this is just a
+// heuristic for when the affordance is relevant, not an auth check.
+function isInternalPath(pathname: string): boolean {
+  return (
+    pathname.startsWith("/workspace") ||
+    pathname.startsWith("/new") ||
+    /^\/reviews\/[^/]+\/edit/.test(pathname)
+  );
+}
+
 export default function SiteHeader() {
   const pathname = usePathname();
+  const router = useRouter();
+
+  async function handleLogout() {
+    await fetch("/api/logout", { method: "POST" });
+    router.push("/");
+    router.refresh();
+  }
 
   return (
     <header className="sticky top-0 z-40">
@@ -53,6 +71,15 @@ export default function SiteHeader() {
                   </Link>
                 );
               })}
+              {isInternalPath(pathname) && (
+                <button
+                  type="button"
+                  onClick={handleLogout}
+                  className="rounded-full px-2.5 py-1.5 text-xs sm:px-4 sm:py-2 sm:text-sm font-medium whitespace-nowrap text-un-muted hover:bg-un-blue-50 hover:text-un-blue-800 transition-colors"
+                >
+                  Log out
+                </button>
+              )}
             </nav>
           </div>
         </div>
