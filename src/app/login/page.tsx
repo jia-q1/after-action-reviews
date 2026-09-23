@@ -40,8 +40,8 @@ function LoginForm() {
           Enter the access code
         </h1>
         <p className="mt-2 text-sm text-un-muted">
-          The AAR Workspace and drafting tools are for internal UNDP staff
-          only. The public Review Library doesn&apos;t require this.
+          This tool, including the Review Library, is for internal UNDP
+          staff only.
         </p>
 
         <form onSubmit={handleSubmit} className="mt-6 space-y-3">

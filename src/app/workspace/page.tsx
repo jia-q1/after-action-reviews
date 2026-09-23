@@ -11,11 +11,11 @@ import { listRecords, listInvites, type AarRecord, type SurveyInvite } from "@/l
 
 // Internal tool for developing AARs: starting new ones, tracking survey
 // responses, and picking up drafts already in progress. Deliberately
-// separate from the public library (/) -- completed reviews and the
-// recommendations dashboard there are meant for all UNDP personnel,
-// while this workspace is the back-end drafting/review tooling. Note:
-// there's no login/access-control layer yet, so this separation is
-// currently by navigation only, not enforced.
+// separate from the library (/) -- completed reviews and the
+// recommendations dashboard there are meant for general browsing, while
+// this workspace is the back-end drafting/review tooling. Both require
+// the same shared access code (see src/lib/auth.ts and src/proxy.ts);
+// this split is about which content belongs where, not who can log in.
 
 // Pipeline order, earliest to latest — mirrors how a review actually moves
 // through /new (surveys -> drafting -> validation).
