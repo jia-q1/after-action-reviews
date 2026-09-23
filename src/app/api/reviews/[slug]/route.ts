@@ -29,6 +29,9 @@ export async function GET(
   _request: Request,
   { params }: { params: Promise<{ slug: string }> },
 ) {
+  if (!(await requireAuth())) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const { slug } = await params;
   const record = await getRecordBySlug(slug);
   if (!record) {

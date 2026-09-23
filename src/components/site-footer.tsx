@@ -1,11 +1,10 @@
-import UnEmblem from "@/components/un-emblem";
-
 export default function SiteFooter() {
   return (
     <footer className="bg-un-blue-950 text-un-blue-100">
       <div className="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8 py-10 grid gap-8 sm:grid-cols-3">
         <div className="flex items-start gap-3">
-          <UnEmblem className="h-9 w-9 shrink-0" />
+          {/* eslint-disable-next-line @next/next/no-img-element -- favicon.ico is served as a static file, not something next/image should optimize */}
+          <img src="/favicon.ico" alt="" className="h-9 w-9 shrink-0 rounded" />
           <div>
             <p className="font-serif text-base font-semibold text-white">
               After Action Review Library
