@@ -1,5 +1,6 @@
 import "server-only";
 import { GoogleGenAI, Type } from "@google/genai";
+import { get as getBlob } from "@vercel/blob";
 import { responseAreas, priorityLevels } from "@/data/reviews";
 import type { ReportDraft, DocumentSource, SurveyInvite, SurveyTemplate } from "@/lib/aar-store";
 import type { TimelineEntry, FindingRow } from "@/data/reviews";
@@ -7,6 +8,29 @@ import { EXTRACTABLE_MIME_TYPES, extractDocumentText } from "@/lib/document-extr
 
 export function isGeminiConfigured(): boolean {
   return Boolean(process.env.GEMINI_API_KEY);
+}
+
+// Documents attached before Blob storage existed (or synced from
+// SharePoint) still carry base64 content inline; larger ones uploaded
+// since live in Blob storage instead, with only a URL on the record.
+// This resolves either into one in-memory Buffer so the rest of the
+// pipeline doesn't need to care which. Returns null for a document this
+// server genuinely can't read (SharePoint-only, with no way for us to
+// authenticate back to it).
+async function resolveDocumentBuffer(doc: DocumentSource): Promise<Buffer | null> {
+  if (doc.content) {
+    return Buffer.from(doc.content, "base64");
+  }
+  if (doc.blobUrl) {
+    try {
+      const result = await getBlob(doc.blobUrl, { access: "private" });
+      if (!result) return null;
+      return Buffer.from(await new Response(result.stream).arrayBuffer());
+    } catch {
+      return null;
+    }
+  }
+  return null;
 }
 
 // Plain text formats are just folded into the prompt text directly (no
@@ -20,10 +44,9 @@ const FILE_API_MIME_TYPES = new Set(["application/pdf"]);
 
 async function uploadAndWaitForActive(
   ai: GoogleGenAI,
-  input: { mimeType: string; data: string; displayName: string },
+  input: { mimeType: string; buffer: Buffer; displayName: string },
 ): Promise<{ fileUri: string; mimeType: string }> {
-  const buffer = Buffer.from(input.data, "base64");
-  const blob = new Blob([buffer], { type: input.mimeType });
+  const blob = new Blob([new Uint8Array(input.buffer)], { type: input.mimeType });
 
   // Upload is the most network-heavy step here (bigger files = more time
   // for a transient blip), so it gets one retry rather than failing the
@@ -163,7 +186,8 @@ export async function generateDraft(input: {
   await Promise.all(
     input.documents.map(async (doc) => {
       const mimeType = doc.mimeType ?? "";
-      if (!doc.content) {
+      const buffer = await resolveDocumentBuffer(doc);
+      if (!buffer) {
         unreadableDocuments.push(doc.name);
         return;
       }
@@ -171,15 +195,14 @@ export async function generateDraft(input: {
         if (FILE_API_MIME_TYPES.has(mimeType)) {
           const uploaded = await uploadAndWaitForActive(ai, {
             mimeType,
-            data: doc.content,
+            buffer,
             displayName: doc.name,
           });
           fileParts.push({ fileData: uploaded });
         } else if (INLINE_TEXT_MIME_TYPES.has(mimeType)) {
-          const text = Buffer.from(doc.content, "base64").toString("utf-8");
+          const text = buffer.toString("utf-8");
           extractedTextBlocks.push(`--- Document: ${doc.name} ---\n${text}`);
         } else if (EXTRACTABLE_MIME_TYPES.has(mimeType)) {
-          const buffer = Buffer.from(doc.content, "base64");
           const text = await extractDocumentText(mimeType, buffer);
           if (text?.trim()) {
             extractedTextBlocks.push(`--- Document: ${doc.name} ---\n${text}`);

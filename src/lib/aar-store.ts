@@ -35,6 +35,12 @@ export type DocumentSource = {
   content?: string;
   sharepointId?: string;
   sharepointUrl?: string;
+  // Set when the file was uploaded directly from the browser to Vercel
+  // Blob storage (bypassing our server, which is capped at 4.5MB per
+  // request on Vercel) -- unlike sharepointUrl, our server holds the
+  // token needed to read this back, so these documents ARE readable by
+  // the AI drafting step.
+  blobUrl?: string;
   // How this specific piece of evidence was gathered (desk review, key
   // informant interview, etc.) — a property of the document, not the AAR
   // as a whole, since different sources are gathered different ways.

@@ -14,9 +14,15 @@ import {
   type ResponseArea,
   type TimelineEntry,
 } from "@/data/reviews";
+import { upload } from "@vercel/blob/client";
 import type { DocumentSource } from "@/lib/aar-store";
 
-export const MAX_FILE_BYTES = 15 * 1024 * 1024;
+// Files upload straight from the browser to Vercel Blob storage (see
+// uploadFileToBlob below), not through our own server, so this is no
+// longer bounded by Vercel's 4.5MB request-body limit -- kept generous
+// but not unbounded. Must match the server-side maximumSizeInBytes in
+// /api/documents/blob-upload, which is the limit actually enforced.
+export const MAX_FILE_BYTES = 100 * 1024 * 1024;
 
 // Report text fields grow to fit whatever's in them instead of clipping
 // long generated paragraphs inside a fixed-height box.
@@ -36,6 +42,26 @@ export function readFileAsBase64(file: File): Promise<string> {
     reader.onerror = () => reject(reader.error);
     reader.readAsDataURL(file);
   });
+}
+
+// Uploads a file directly from the browser to Vercel Blob storage,
+// bypassing our server for the actual bytes (only a short-lived token
+// round-trips through /api/documents/blob-upload). Shared by both the
+// drafting wizard and the standalone review-edit page so their attach
+// logic doesn't drift apart the way handleGenerate's autosave-cancel
+// bug once did.
+export async function uploadFileToBlob(file: File): Promise<DocumentSource> {
+  const blob = await upload(`documents/${file.name}`, file, {
+    access: "private",
+    handleUploadUrl: "/api/documents/blob-upload",
+  });
+  return {
+    id: crypto.randomUUID(),
+    name: file.name,
+    size: file.size,
+    mimeType: file.type || undefined,
+    blobUrl: blob.url,
+  };
 }
 
 export function formatBytes(bytes?: number) {

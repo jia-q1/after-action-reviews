@@ -30,7 +30,7 @@ import {
   TimelineField,
   UploadIcon,
   formatBytes,
-  readFileAsBase64,
+  uploadFileToBlob,
 } from "@/components/report-editor";
 import StatusBadge from "@/components/status-badge";
 
@@ -218,27 +218,12 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
     const readable = files.filter((f) => f.size <= MAX_FILE_BYTES);
     if (oversized.length > 0) {
       setFileError(
-        `${oversized.map((f) => f.name).join(", ")} ${oversized.length === 1 ? "is" : "are"} over the 15 MB limit and ${oversized.length === 1 ? "wasn't" : "weren't"} attached.`,
+        `${oversized.map((f) => f.name).join(", ")} ${oversized.length === 1 ? "is" : "are"} over the 100 MB limit and ${oversized.length === 1 ? "wasn't" : "weren't"} attached.`,
       );
     }
 
     try {
-      const added = await Promise.all(
-        readable.map(async (file) => {
-          const res = await fetch("/api/documents", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              reviewSlug: slug,
-              fileName: file.name,
-              mimeType: file.type || undefined,
-              contentBase64: await readFileAsBase64(file),
-            }),
-          });
-          if (!res.ok) throw new Error("upload failed");
-          return (await res.json()) as DocumentSource;
-        }),
-      );
+      const added = await Promise.all(readable.map(uploadFileToBlob));
       setDocuments((prev) => [...prev, ...added]);
     } catch {
       setFileError("Couldn't attach one of those files. Try again.");
@@ -263,6 +248,16 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
       }).catch(() => {
         // The library file may be orphaned if this fails; not worth
         // blocking the UI removal over.
+      });
+    }
+    if (doc?.blobUrl) {
+      fetch("/api/documents/blob-delete", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: doc.blobUrl }),
+      }).catch(() => {
+        // Same tradeoff as the SharePoint case above -- an orphaned blob
+        // isn't worth blocking the UI removal over.
       });
     }
   }
