@@ -13,24 +13,32 @@ import { dataCollectionMethods, type FindingRow, type Interviewee, type Timeline
 import { formatPeriod } from "@/lib/format";
 import {
   getRecord,
+  listInvites,
   saveRecord,
   type AarRecord,
   type DocumentSource,
   type ReportDraft as Draft,
+  type SurveyInvite,
 } from "@/lib/aar-store";
 import {
   AccordionArtifact,
   ArtifactField,
   Bibliography,
   DocIcon,
+  GenerateConfirmBanner,
+  GeneratingBanner,
   IntervieweeField,
   MatrixField,
   MAX_FILE_BYTES,
   Panel,
+  PendingUploadRow,
+  SurveyResponseSummary,
   TimelineField,
   UploadIcon,
+  attachFilesWithProgress,
+  buildGenerateWarnings,
   formatBytes,
-  uploadFileToBlob,
+  type PendingUpload,
 } from "@/components/report-editor";
 import StatusBadge from "@/components/status-badge";
 
@@ -58,6 +66,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
   const [record, setRecord] = useState<AarRecord | null>(null);
 
   const [documents, setDocuments] = useState<DocumentSource[]>([]);
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [findingsMatrix, setFindingsMatrix] = useState<FindingRow[]>([]);
@@ -71,6 +80,20 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
 
   const [isSaving, setIsSaving] = useState(false);
   const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
+
+  const [invites, setInvites] = useState<SurveyInvite[]>([]);
+  const [generateStatus, setGenerateStatus] = useState<
+    "idle" | "generating" | "error"
+  >("idle");
+  const [generateError, setGenerateError] = useState<string | null>(null);
+  const [generateWarning, setGenerateWarning] = useState<string | null>(null);
+  const [pendingGenerateWarnings, setPendingGenerateWarnings] = useState<
+    string[] | null
+  >(null);
+
+  useEffect(() => {
+    listInvites(slug).then(setInvites);
+  }, [slug]);
 
   // One-time hydration from the database on mount.
   useEffect(() => {
@@ -184,6 +207,72 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
     router.push("/");
   }
 
+  function requestGenerate() {
+    const warnings = buildGenerateWarnings({
+      invites,
+      hasExistingDraft: Boolean(draft.executiveSummary.trim()),
+    });
+    if (warnings.length > 0) {
+      setPendingGenerateWarnings(warnings);
+      return;
+    }
+    handleGenerate();
+  }
+
+  // Same generation path as the drafting wizard (src/app/new), so a
+  // document attached or a survey response that arrives after "Submit for
+  // review" isn't stranded -- this used to be the wizard's only capability,
+  // which meant nothing after submission could ever make it into the draft.
+  async function handleGenerate() {
+    setPendingGenerateWarnings(null);
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    setGenerateStatus("generating");
+    setGenerateError(null);
+    setGenerateWarning(null);
+
+    // Make sure the DB has what we're about to ask the AI to read --
+    // documents attached here might only be in local state otherwise.
+    const beforeGenerate = buildUpdatedRecord();
+    if (beforeGenerate) {
+      await saveRecord(beforeGenerate);
+      setRecord(beforeGenerate);
+      setLastSaveTime(new Date());
+    }
+
+    try {
+      const res = await fetch("/api/generate-draft", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ slug }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}) as { error?: string });
+        setGenerateError(body.error ?? `Request failed (${res.status})`);
+        setGenerateStatus("error");
+        return;
+      }
+
+      const body = (await res.json()) as {
+        draft: Draft & { timeline: TimelineEntry[]; findingsMatrix: FindingRow[] };
+        unreadableDocuments: string[];
+      };
+      const { timeline: aiTimeline, findingsMatrix: aiFindingsMatrix, ...draftFields } = body.draft;
+      setDraft(draftFields);
+      setTimeline(aiTimeline ?? []);
+      setFindingsMatrix(aiFindingsMatrix ?? []);
+      if (body.unreadableDocuments?.length > 0) {
+        setGenerateWarning(
+          `The AI couldn't read: ${body.unreadableDocuments.join(", ")}. Review these documents manually.`,
+        );
+      }
+      setGenerateStatus("idle");
+    } catch {
+      setGenerateError("Could not reach the AI drafting service.");
+      setGenerateStatus("error");
+    }
+  }
+
   // Autosave shortly after any edit, same pattern as the drafting wizard.
   // The timer is kept in a ref (not just the effect's closure) so an explicit
   // Save/Complete can cancel it directly -- relying on the cleanup function
@@ -222,12 +311,22 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
       );
     }
 
-    try {
-      const added = await Promise.all(readable.map(uploadFileToBlob));
-      setDocuments((prev) => [...prev, ...added]);
-    } catch {
-      setFileError("Couldn't attach one of those files. Try again.");
-    }
+    attachFilesWithProgress(readable, {
+      onStart: (pending) => setPendingUploads((prev) => [...prev, pending]),
+      onSuccess: (pendingId, doc) => {
+        setDocuments((prev) => [...prev, doc]);
+        setPendingUploads((prev) => prev.filter((u) => u.id !== pendingId));
+      },
+      onError: (pendingId, message) => {
+        setPendingUploads((prev) =>
+          prev.map((u) => (u.id === pendingId ? { ...u, error: message } : u)),
+        );
+      },
+    });
+  }
+
+  function dismissPendingUpload(id: string) {
+    setPendingUploads((prev) => prev.filter((u) => u.id !== id));
   }
 
   function addManualSource() {
@@ -329,6 +428,12 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
                 ✓ Saved
               </span>
             )}
+            <Link
+              href={`/reviews/${encodeURIComponent(record.slug)}`}
+              className="rounded-full border border-un-border px-4 py-2 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
+            >
+              View / export
+            </Link>
             <button
               type="button"
               onClick={handleSave}
@@ -432,8 +537,15 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
               </button>
             </div>
 
-            {documents.length > 0 && (
+            {(documents.length > 0 || pendingUploads.length > 0) && (
               <ul className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                {pendingUploads.map((upload) => (
+                  <PendingUploadRow
+                    key={upload.id}
+                    upload={upload}
+                    onDismiss={dismissPendingUpload}
+                  />
+                ))}
                 {documents.map((doc) => (
                   <li
                     key={doc.id}
@@ -486,16 +598,56 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
           </Panel>
 
           <div className="rounded-2xl border border-un-border bg-un-surface shadow-sm">
-            <div className="border-b border-un-border px-6 py-4">
-              <h2 className="font-serif text-lg font-semibold text-un-ink">
-                Report
-              </h2>
-              <p className="text-xs text-un-muted">
-                Edit any section below — changes save automatically.
-              </p>
+            <div className="flex items-start justify-between gap-4 border-b border-un-border px-6 py-4">
+              <div>
+                <h2 className="font-serif text-lg font-semibold text-un-ink">
+                  Report
+                </h2>
+                <p className="text-xs text-un-muted">
+                  Edit any section below — changes save automatically.
+                </p>
+                {invites.length > 0 && (
+                  <div className="mt-1">
+                    <SurveyResponseSummary invites={invites} />
+                  </div>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={requestGenerate}
+                disabled={generateStatus === "generating"}
+                className="shrink-0 rounded-full border border-un-border px-4 py-2 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50 disabled:cursor-wait disabled:opacity-70"
+              >
+                {generateStatus === "generating"
+                  ? "Generating…"
+                  : draft.executiveSummary.trim()
+                    ? "Regenerate with AI"
+                    : "Generate with AI"}
+              </button>
             </div>
 
             <div className="space-y-6 p-6">
+              {pendingGenerateWarnings && (
+                <GenerateConfirmBanner
+                  warnings={pendingGenerateWarnings}
+                  onConfirm={handleGenerate}
+                  onCancel={() => setPendingGenerateWarnings(null)}
+                />
+              )}
+              {generateStatus === "generating" && (
+                <GeneratingBanner documentCount={documents.length} />
+              )}
+              {generateError && (
+                <p className="rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {generateError}
+                </p>
+              )}
+              {generateWarning && (
+                <p className="rounded-lg bg-un-gold-100 px-3 py-2 text-xs text-un-gold-700">
+                  {generateWarning}
+                </p>
+              )}
+
               <ArtifactField
                 label="Executive Summary"
                 value={draft.executiveSummary}

@@ -36,14 +36,20 @@ import {
   Bibliography,
   DocIcon,
   Field,
+  GenerateConfirmBanner,
+  GeneratingBanner,
   IntervieweeField,
   MatrixField,
   MAX_FILE_BYTES,
   Panel,
+  PendingUploadRow,
+  SurveyResponseSummary,
   TimelineField,
   UploadIcon,
+  attachFilesWithProgress,
+  buildGenerateWarnings,
   formatBytes,
-  uploadFileToBlob,
+  type PendingUpload,
 } from "@/components/report-editor";
 
 const STEPS = [
@@ -272,6 +278,10 @@ function NewReviewWorkspace() {
   const [unitIsOther, setUnitIsOther] = useState(false);
 
   const [documents, setDocuments] = useState<DocumentSource[]>([]);
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
+  const [pendingGenerateWarnings, setPendingGenerateWarnings] = useState<
+    string[] | null
+  >(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [dragActive, setDragActive] = useState(false);
@@ -477,12 +487,22 @@ function NewReviewWorkspace() {
       );
     }
 
-    try {
-      const added = await Promise.all(readable.map(uploadFileToBlob));
-      setDocuments((prev) => [...prev, ...added]);
-    } catch {
-      setFileError("Couldn't attach one of those files. Try again.");
-    }
+    attachFilesWithProgress(readable, {
+      onStart: (pending) => setPendingUploads((prev) => [...prev, pending]),
+      onSuccess: (pendingId, doc) => {
+        setDocuments((prev) => [...prev, doc]);
+        setPendingUploads((prev) => prev.filter((u) => u.id !== pendingId));
+      },
+      onError: (pendingId, message) => {
+        setPendingUploads((prev) =>
+          prev.map((u) => (u.id === pendingId ? { ...u, error: message } : u)),
+        );
+      },
+    });
+  }
+
+  function dismissPendingUpload(id: string) {
+    setPendingUploads((prev) => prev.filter((u) => u.id !== id));
   }
 
   function addManualSource() {
@@ -681,7 +701,10 @@ function NewReviewWorkspace() {
     };
     setOverview(updatedOverview);
     await saveRecord(buildRecord({ overview: updatedOverview }));
-    router.push("/workspace");
+    // Land on the review's own page (not /workspace) so the export button
+    // is immediately visible -- this used to drop people back into the
+    // workspace list with no confirmation of what had just happened.
+    router.push(`/reviews/${encodeURIComponent(slug)}`);
   }
 
   async function handleCompleteAar() {
@@ -827,7 +850,20 @@ function NewReviewWorkspace() {
       };
   }
 
+  function requestGenerate() {
+    const warnings = buildGenerateWarnings({
+      invites,
+      hasExistingDraft: status === "ready",
+    });
+    if (warnings.length > 0) {
+      setPendingGenerateWarnings(warnings);
+      return;
+    }
+    handleGenerate();
+  }
+
   async function handleGenerate() {
+    setPendingGenerateWarnings(null);
     setStatus("generating");
     setStep(4);
     setGenerateError(null);
@@ -1643,18 +1679,30 @@ function NewReviewWorkspace() {
               )}
             </Panel>
 
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={status === "generating"}
-              className="w-full rounded-full bg-un-gold-500 px-4 py-3 text-sm font-semibold text-un-blue-950 shadow-sm transition-colors hover:bg-un-gold-600 disabled:cursor-wait disabled:opacity-70"
-            >
-              {status === "generating"
-                ? "Generating draft..."
-                : status === "ready"
-                  ? "Regenerate draft"
-                  : "Generate draft with AI"}
-            </button>
+            {invites.length > 0 && (
+              <SurveyResponseSummary invites={invites} />
+            )}
+
+            {pendingGenerateWarnings ? (
+              <GenerateConfirmBanner
+                warnings={pendingGenerateWarnings}
+                onConfirm={handleGenerate}
+                onCancel={() => setPendingGenerateWarnings(null)}
+              />
+            ) : (
+              <button
+                type="button"
+                onClick={requestGenerate}
+                disabled={status === "generating"}
+                className="w-full rounded-full bg-un-gold-500 px-4 py-3 text-sm font-semibold text-un-blue-950 shadow-sm transition-colors hover:bg-un-gold-600 disabled:cursor-wait disabled:opacity-70"
+              >
+                {status === "generating"
+                  ? "Generating draft..."
+                  : status === "ready"
+                    ? "Regenerate draft"
+                    : "Generate draft with AI"}
+              </button>
+            )}
             </div>
 
             {/* Second grid column: attach and manage source documents. */}
@@ -1781,8 +1829,15 @@ function NewReviewWorkspace() {
                 </button>
               </div>
 
-              {documents.length > 0 && (
+              {(documents.length > 0 || pendingUploads.length > 0) && (
                 <ul className="mt-4 grid gap-3 sm:grid-cols-2">
+                  {pendingUploads.map((upload) => (
+                    <PendingUploadRow
+                      key={upload.id}
+                      upload={upload}
+                      onDismiss={dismissPendingUpload}
+                    />
+                  ))}
                   {documents.map((doc) => (
                     <li
                       key={doc.id}
@@ -1858,6 +1913,11 @@ function NewReviewWorkspace() {
                 <p className="text-xs text-un-muted">
                   Editable draft &middot; not yet saved to the library
                 </p>
+                {invites.length > 0 && (
+                  <div className="mt-1">
+                    <SurveyResponseSummary invites={invites} />
+                  </div>
+                )}
               </div>
               <StatusPill status={status} />
             </div>
@@ -1880,7 +1940,24 @@ function NewReviewWorkspace() {
                   </button>
                 </div>
               )}
-              {status === "generating" && <GeneratingState />}
+              {status === "generating" && (
+                <div className="space-y-6">
+                  <GeneratingBanner documentCount={documents.length} />
+                  <div className="space-y-6 animate-pulse">
+                    {[
+                      "Executive Summary",
+                      "Introduction",
+                      "Methodology",
+                      "Analysis of the response",
+                    ].map((label) => (
+                      <div key={label}>
+                        <div className="h-4 w-40 rounded bg-un-border" />
+                        <div className="mt-3 h-20 rounded-lg bg-un-blue-50" />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
 
               {status === "error" && (
                 <div className="flex flex-col items-center justify-center gap-3 rounded-xl border border-dashed border-red-300 bg-red-50/60 py-16 text-center">
@@ -2208,17 +2285,3 @@ function StatusPill({
   );
 }
 
-function GeneratingState() {
-  return (
-    <div className="space-y-6 animate-pulse">
-      {["Executive Summary", "Introduction", "Methodology", "Analysis of the response"].map(
-        (label) => (
-          <div key={label}>
-            <div className="h-4 w-40 rounded bg-un-border" />
-            <div className="mt-3 h-20 rounded-lg bg-un-blue-50" />
-          </div>
-        ),
-      )}
-    </div>
-  );
-}

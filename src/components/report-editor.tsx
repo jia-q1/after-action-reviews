@@ -15,7 +15,7 @@ import {
   type TimelineEntry,
 } from "@/data/reviews";
 import { upload } from "@vercel/blob/client";
-import type { DocumentSource } from "@/lib/aar-store";
+import type { DocumentSource, SurveyInvite } from "@/lib/aar-store";
 
 // Files upload straight from the browser to Vercel Blob storage (see
 // uploadFileToBlob below), not through our own server, so this is no
@@ -62,6 +62,79 @@ export async function uploadFileToBlob(file: File): Promise<DocumentSource> {
     mimeType: file.type || undefined,
     blobUrl: blob.url,
   };
+}
+
+// A file mid-upload to Blob storage, or one that failed -- tracked
+// separately from `documents` (which only ever holds files that finished
+// uploading) so the list can show "Attaching..." the instant a file is
+// picked instead of going silent until every file in the batch resolves.
+export type PendingUpload = { id: string; name: string; size: number; error?: string };
+
+// Kicks off each upload independently (not Promise.all) so one slow or
+// failed file doesn't hold up feedback on the others, and calls back as
+// soon as each one settles rather than waiting for the whole batch.
+export function attachFilesWithProgress(
+  files: File[],
+  callbacks: {
+    onStart: (pending: PendingUpload) => void;
+    onSuccess: (pendingId: string, doc: DocumentSource) => void;
+    onError: (pendingId: string, message: string) => void;
+  },
+) {
+  for (const file of files) {
+    const pendingId = crypto.randomUUID();
+    callbacks.onStart({ id: pendingId, name: file.name, size: file.size });
+    uploadFileToBlob(file)
+      .then((doc) => callbacks.onSuccess(pendingId, doc))
+      .catch(() => callbacks.onError(pendingId, "Couldn't attach — try again."));
+  }
+}
+
+export function PendingUploadRow({
+  upload,
+  onDismiss,
+}: {
+  upload: PendingUpload;
+  onDismiss: (id: string) => void;
+}) {
+  return (
+    <li
+      className={
+        "rounded-xl border p-3.5 " +
+        (upload.error
+          ? "border-red-300 bg-red-50/60"
+          : "border-un-border bg-un-blue-50/40")
+      }
+    >
+      <div className="flex items-start justify-between gap-2">
+        <span className="flex min-w-0 items-center gap-2 text-sm text-un-ink">
+          {upload.error ? (
+            <span className="shrink-0 text-red-500">!</span>
+          ) : (
+            <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-un-blue-300 border-t-un-blue-600" />
+          )}
+          <span className="min-w-0 truncate font-medium">{upload.name}</span>
+        </span>
+        {upload.error && (
+          <button
+            type="button"
+            onClick={() => onDismiss(upload.id)}
+            aria-label={`Dismiss ${upload.name}`}
+            className="shrink-0 rounded-full p-1 text-un-muted hover:bg-white hover:text-red-600"
+          >
+            &times;
+          </button>
+        )}
+      </div>
+      <p
+        className={
+          "mt-0.5 text-xs " + (upload.error ? "text-red-600" : "text-un-blue-600")
+        }
+      >
+        {upload.error ?? "Attaching…"}
+      </p>
+    </li>
+  );
 }
 
 export function formatBytes(bytes?: number) {
@@ -616,6 +689,126 @@ export function Bibliography({ documents }: { documents: DocumentSource[] }) {
           No source documents attached yet.
         </p>
       )}
+    </div>
+  );
+}
+
+// --- AI generation: shared between the drafting wizard and the
+// post-submission review page, so "Generate"/"Regenerate" behaves the same
+// wherever it's triggered from (see AGENTS.md-adjacent context: this used
+// to only exist in the wizard, which meant survey responses or new
+// documents added after "Submit for review" could never make it into the
+// draft -- see project history for the full diagnosis). ----------------
+
+export function SurveyResponseSummary({ invites }: { invites: SurveyInvite[] }) {
+  if (invites.length === 0) return null;
+  const responded = invites.filter((i) => i.status === "Responded").length;
+  return (
+    <p className="text-xs text-un-muted">
+      Survey responses:{" "}
+      <span className="font-semibold text-un-ink">
+        {responded} of {invites.length}
+      </span>{" "}
+      received
+    </p>
+  );
+}
+
+// Reasons to pause and ask before actually calling the AI, rather than
+// generating immediately: responses still outstanding (drafting early
+// loses their input), or a previous draft's text is about to be
+// overwritten (regenerating never merges, so unsaved manual edits vanish).
+export function buildGenerateWarnings({
+  invites,
+  hasExistingDraft,
+}: {
+  invites: SurveyInvite[];
+  hasExistingDraft: boolean;
+}): string[] {
+  const warnings: string[] = [];
+  const responded = invites.filter((i) => i.status === "Responded").length;
+  const total = invites.length;
+  if (total > 0 && responded < total) {
+    const outstanding = total - responded;
+    warnings.push(
+      `${outstanding} of ${total} survey invite${total === 1 ? "" : "s"} ${outstanding === 1 ? "hasn't" : "haven't"} responded yet. Generating now won't include ${outstanding === 1 ? "that response" : "those responses"}.`,
+    );
+  }
+  if (hasExistingDraft) {
+    warnings.push(
+      "This will overwrite the current draft text with a new AI-generated version. Any manual edits will be lost.",
+    );
+  }
+  return warnings;
+}
+
+export function GenerateConfirmBanner({
+  warnings,
+  onConfirm,
+  onCancel,
+}: {
+  warnings: string[];
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-un-gold-500/40 bg-un-gold-100/60 px-4 py-3 text-sm text-un-blue-950">
+      <ul className="list-disc space-y-1 pl-4">
+        {warnings.map((warning, i) => (
+          <li key={i}>{warning}</li>
+        ))}
+      </ul>
+      <div className="mt-3 flex gap-2">
+        <button
+          type="button"
+          onClick={onConfirm}
+          className="rounded-full bg-un-blue-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-un-blue-700"
+        >
+          Generate anyway
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-full border border-un-border px-3 py-1.5 text-xs font-semibold text-un-blue-700 hover:bg-un-blue-50"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Rough scale, not a precise ETA -- actual time depends on document mix (a
+// 40-page PDF costs more than a one-page memo), but this gives people a
+// sense of whether "still working" means seconds or minutes. Calibrated
+// against a real run: ~90s for ~38 large documents.
+function estimateGenerationTime(documentCount: number): string {
+  if (documentCount > 20) return "a few minutes";
+  if (documentCount > 5) return "1-2 minutes";
+  return "under a minute";
+}
+
+export function GeneratingBanner({ documentCount }: { documentCount: number }) {
+  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+
+  useEffect(() => {
+    const interval = setInterval(() => setElapsedSeconds((s) => s + 1), 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const minutes = Math.floor(elapsedSeconds / 60);
+  const seconds = elapsedSeconds % 60;
+  const elapsedLabel = minutes > 0 ? `${minutes}m ${seconds}s` : `${seconds}s`;
+
+  return (
+    <div className="flex items-center justify-center gap-3 rounded-xl border border-un-blue-100 bg-un-blue-50/60 px-4 py-3 text-center">
+      <span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-un-blue-300 border-t-un-blue-600" />
+      <p className="text-sm text-un-blue-900">
+        <span className="font-semibold">Working on it…</span> Generating from{" "}
+        {documentCount || "your"} document{documentCount === 1 ? "" : "s"}{" "}
+        usually takes {estimateGenerationTime(documentCount)}. Elapsed:{" "}
+        {elapsedLabel}
+      </p>
     </div>
   );
 }

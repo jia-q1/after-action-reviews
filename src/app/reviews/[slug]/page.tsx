@@ -230,12 +230,12 @@ export default async function ReviewPage({
                     ? "Edit this review"
                     : "Continue drafting"}
               </Link>
-              <button
-                type="button"
-                className="w-full rounded-full border border-un-border px-4 py-2.5 text-sm font-semibold text-un-blue-700 transition-colors hover:bg-un-blue-50"
+              <a
+                href={`/api/reviews/${encodeURIComponent(review.slug)}/export`}
+                className="block w-full rounded-full border border-un-border px-4 py-2.5 text-center text-sm font-semibold text-un-blue-700 transition-colors hover:bg-un-blue-50"
               >
-                Export as document
-              </button>
+                Export as .docx
+              </a>
               {review.status === "Completed" && (
                 <DeleteReviewButton slug={review.slug} />
               )}
