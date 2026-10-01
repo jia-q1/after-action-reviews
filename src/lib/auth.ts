@@ -4,7 +4,7 @@ import { cookies } from "next/headers";
 
 // Shared-access-code gate: one internal password protects every mutating
 // action and PII-bearing read, not per-user accounts. This is a deliberate
-// stopgap -- proper per-person UNDP login (Azure AD) is the better long-term
+// stopgap proper per-person UNDP login (Azure AD) is the better long-term
 // answer, but needs a tenant-admin-approved app registration, which was
 // blocking closing this hole today. See project memory for the tradeoff.
 
@@ -67,7 +67,7 @@ export function verifySessionToken(token: string | undefined | null): boolean {
 }
 
 // Every mutating (and PII-bearing) API route calls this at the top and
-// bails with a 401 if it's false -- explicitly, not just relying on the
+// bails with a 401 if it's false; explicitly, not just relying on the
 // page-level redirect in proxy.ts. A matcher gap or route move could
 // silently remove proxy coverage; this can't be bypassed that way.
 export async function requireAuth(): Promise<boolean> {
