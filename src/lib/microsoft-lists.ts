@@ -67,6 +67,20 @@ export async function createSurveyTemplateInList(
 
 // --- Survey invites ---------------------------------------------------
 
+// The flow's submitResponse branch persists answers/respondedAt correctly
+// but never actually writes the Status column (confirmed by calling the
+// flow directly, even with status explicitly set in the request) -- it
+// stays stuck at whatever it was before ("Draft"/"Sent") forever. Every
+// reader goes through listInvitesFromList/getInviteFromList, so the
+// correction belongs here, not just at submission time: if SharePoint's
+// own Status disagrees with the presence of answers, trust the answers.
+function withCorrectedStatus(record: SurveyInviteRecord): SurveyInviteRecord {
+  if (record.answers && record.status !== "Responded") {
+    return { ...record, status: "Responded" };
+  }
+  return record;
+}
+
 export async function listInvitesFromList(
   reviewSlug: string,
 ): Promise<SurveyInviteRecord[]> {
@@ -79,7 +93,8 @@ export async function listInvitesFromList(
       body: JSON.stringify({ operation: "list", reviewSlug }),
     });
     if (!res.ok) return [];
-    return (await res.json()) as SurveyInviteRecord[];
+    const records = (await res.json()) as SurveyInviteRecord[];
+    return records.map(withCorrectedStatus);
   } catch {
     return [];
   }
@@ -98,7 +113,7 @@ export async function getInviteFromList(
     });
     if (!res.ok) return undefined;
     const body = (await res.json()) as Partial<SurveyInviteRecord> | null;
-    return body?.id ? (body as SurveyInviteRecord) : undefined;
+    return body?.id ? withCorrectedStatus(body as SurveyInviteRecord) : undefined;
   } catch {
     return undefined;
   }
@@ -191,11 +206,14 @@ export async function submitResponseInList(
         id,
         answers,
         respondedAt: new Date().toISOString(),
+        status: "Responded",
       }),
     });
   } catch {
     // fall through to re-read below regardless
   }
+  // getInviteFromList already corrects the status (see withCorrectedStatus
+  // above) since the flow doesn't persist it on this operation.
   return getInviteFromList(id);
 }
 
