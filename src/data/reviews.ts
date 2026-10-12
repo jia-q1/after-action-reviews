@@ -328,8 +328,8 @@ export type Review = {
   interviewees: Interviewee[];
 };
 
-function year(periodEnd: string) {
-  return Number(periodEnd.split("-")[0]);
+function year(value: string) {
+  return Number(value.split("-")[0]);
 }
 
 export const reviews: Review[] = [
@@ -923,7 +923,15 @@ export function getReviewBySlug(slug: string) {
 }
 
 export function reviewYear(review: Review) {
-  return year(review.periodEnd);
+  // periodEnd is often left blank (an ongoing/open-ended crisis, or just
+  // not filled in yet), which made year("") = 0 and silently sorted the
+  // review into a nonsense "year 0" bucket at the bottom of the library
+  // instead of its real year. Fall back to periodStart's year instead.
+  const end = year(review.periodEnd);
+  if (Number.isFinite(end) && end > 0) return end;
+  const start = year(review.periodStart);
+  if (Number.isFinite(start) && start > 0) return start;
+  return end;
 }
 
 export const statusStyles: Record<
