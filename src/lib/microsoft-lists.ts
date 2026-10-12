@@ -131,11 +131,21 @@ export async function createInviteInList(input: {
   try {
     const flowUrl = process.env.POWER_AUTOMATE_INVITES_URL;
     if (flowUrl) {
-      await fetch(flowUrl, {
+      // The flow's trigger schema rejects `null` for answers/sentAt/
+      // respondedAt (TriggerInputSchemaMismatch) -- a brand-new invite
+      // never has these set, so they're omitted here rather than sent as
+      // null. This was silently failing on every create before (the
+      // response was never checked), which is why invites could be
+      // created locally but never found again by get/list.
+      const { answers: _answers, sentAt: _sentAt, respondedAt: _respondedAt, ...createPayload } = record;
+      const res = await fetch(flowUrl, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ operation: "create", ...record }),
+        body: JSON.stringify({ operation: "create", ...createPayload }),
       });
+      if (!res.ok) {
+        console.error("createInviteInList: flow rejected the invite", res.status, await res.text());
+      }
     }
   } catch {
     // The invite still exists in the caller's response even if the flow
