@@ -15,6 +15,7 @@ import {
   surveyTemplates as seedSurveyTemplates,
   type Review,
   type ResponseArea,
+  type ReviewerFlag,
 } from "@/data/reviews";
 import type { DocumentSource } from "@/lib/aar-store";
 import {
@@ -33,6 +34,7 @@ export type AarRecord = Review & {
   documents: DocumentSource[];
   notes: string;
   prompt: string;
+  reviewerFlags?: ReviewerFlag[];
   updatedAt: string;
 };
 

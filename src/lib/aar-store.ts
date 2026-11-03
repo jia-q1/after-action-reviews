@@ -3,7 +3,7 @@
 // localStorage-only prototype: every visitor hitting the same server now
 // reads and writes the same data.
 
-import type { CrisisType, Review, ReviewStage, ResponseArea } from "@/data/reviews";
+import type { CrisisType, Review, ReviewerFlag, ReviewStage, ResponseArea } from "@/data/reviews";
 
 export type AarOverview = {
   country: string;
@@ -77,6 +77,9 @@ export type AarRecord = Review & {
   // AAR's generation instructions stay reproducible even if the default
   // template is tuned later.
   prompt: string;
+  // Issues raised on the latest AI draft for the reviewer to resolve.
+  // Optional since records saved before this existed don't have it.
+  reviewerFlags?: ReviewerFlag[];
   updatedAt: string;
 };
 

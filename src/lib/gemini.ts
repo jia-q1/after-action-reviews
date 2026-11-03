@@ -1,10 +1,21 @@
 import "server-only";
 import { GoogleGenAI, Type } from "@google/genai";
 import { get as getBlob } from "@vercel/blob";
-import { responseAreas, priorityLevels } from "@/data/reviews";
+import { responseAreas, priorityLevels, recommendationOwners } from "@/data/reviews";
 import type { ReportDraft, DocumentSource, SurveyInvite, SurveyTemplate } from "@/lib/aar-store";
-import type { TimelineEntry, FindingRow } from "@/data/reviews";
-import { EXTRACTABLE_MIME_TYPES, extractDocumentText } from "@/lib/document-extraction";
+import type {
+  TimelineEntry,
+  FindingRow,
+  ReviewerFlag,
+  ReviewerFlagType,
+  SurveyRating,
+} from "@/data/reviews";
+import {
+  EXTRACTABLE_MIME_TYPES,
+  extractDocumentText,
+  extractPdfText,
+} from "@/lib/document-extraction";
+import { extractSurveyRatings, runDraftChecks } from "@/lib/draft-checks";
 
 export function isGeminiConfigured(): boolean {
   return Boolean(process.env.GEMINI_API_KEY);
@@ -93,6 +104,22 @@ const DRAFT_FIELDS: (keyof ReportDraft)[] = [
   "communicationAndResourceMobilization",
 ];
 
+const SOURCES_FIELD = {
+  type: Type.ARRAY,
+  items: { type: Type.STRING },
+  description: "Labels of the sources this is based on, exactly as given in the input",
+};
+
+// "wording" flags only ever come from the automated check -- the model
+// isn't asked to police its own tone after the fact.
+const AI_FLAG_TYPES: ReviewerFlagType[] = [
+  "conflict",
+  "single-source",
+  "thin-evidence",
+  "unsupported",
+  "omitted",
+];
+
 const responseSchema = {
   type: Type.OBJECT,
   properties: {
@@ -116,8 +143,9 @@ const responseSchema = {
         properties: {
           date: { type: Type.STRING, description: "YYYY-MM-DD, or as precise as the sources allow" },
           event: { type: Type.STRING },
+          sources: SOURCES_FIELD,
         },
-        required: ["date", "event"],
+        required: ["date", "event", "sources"],
       },
     },
     findingsMatrix: {
@@ -130,22 +158,91 @@ const responseSchema = {
           recommendation: { type: Type.STRING },
           keyActions: { type: Type.STRING },
           priority: { type: Type.STRING, enum: [...priorityLevels] },
+          owner: {
+            type: Type.STRING,
+            enum: [...recommendationOwners],
+            description: "The part of the organization best placed to act on the recommendation",
+          },
+          sources: SOURCES_FIELD,
         },
-        required: ["responseArea", "finding", "recommendation", "keyActions", "priority"],
+        required: ["responseArea", "finding", "recommendation", "keyActions", "priority", "owner", "sources"],
+      },
+    },
+    reviewerFlags: {
+      type: Type.ARRAY,
+      description: "Issues the human reviewer must resolve before the final draft. Never part of the report text.",
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          type: { type: Type.STRING, enum: [...AI_FLAG_TYPES] },
+          section: { type: Type.STRING, description: "The report section affected, e.g. \"3.5 Deployment of experts\"" },
+          description: { type: Type.STRING },
+          sources: SOURCES_FIELD,
+        },
+        required: ["type", "section", "description", "sources"],
       },
     },
   },
-  required: [...DRAFT_FIELDS, "timeline", "findingsMatrix"],
+  required: [...DRAFT_FIELDS, "timeline", "findingsMatrix", "reviewerFlags"],
+};
+
+type ModelOutput = ReportDraft & {
+  timeline: TimelineEntry[];
+  findingsMatrix: FindingRow[];
+  reviewerFlags: Pick<ReviewerFlag, "type" | "section" | "description" | "sources">[];
 };
 
 export type GeneratedDraft = ReportDraft & {
   timeline: TimelineEntry[];
   findingsMatrix: FindingRow[];
+  reviewerFlags: ReviewerFlag[];
+  surveyRatings: SurveyRating[];
 };
 
 export type GenerateDraftResult =
   | { ok: true; draft: GeneratedDraft; unreadableDocuments: string[] }
   | { ok: false; error: string };
+
+// Rules tied to the output format and the review workflow, appended after
+// the (user-editable, per-AAR) prompt rather than written into it: they
+// have to hold for every AAR, including ones whose saved prompt predates
+// them, and editing the prompt shouldn't be able to switch them off.
+const DRAFTING_RULES = `Rules that always apply to this draft, in addition to the instructions above:
+
+SOURCES
+- Each source is introduced by a line of the form "--- Source: <label> ---". Use those labels exactly, and only those labels, in every "sources" field.
+- Every timeline entry and every findings matrix row must list the sources that support it.
+- Only state a figure, amount, percentage, count or date if it appears in a source. Do not round, convert, combine or estimate figures into new ones. If you're unsure of a figure, leave it out and add a reviewer flag.
+
+DISAGREEMENTS AND WEAK EVIDENCE
+- When sources disagree about the same fact or explanation (a date, an amount, who caused a delay), do not merge them into one neutral account and do not pick a side. Present each view in the text, attributed to its source (e.g. "The Crisis Bureau respondent attributed the delay to ...; the SURGE adviser attributed it to ..."), and add a "conflict" reviewer flag.
+- When two sources give different dates for the same event, write ONE timeline entry, mention both dates in the event text, and add a "conflict" reviewer flag. Do not list it as two separate events.
+- A claim that comes from a single respondent must be attributed in the text ("One respondent reported ...", "The Operations Manager noted ..."), not stated as established fact.
+
+NEUTRAL LANGUAGE
+- Describe what happened; do not label or judge it. Do not add intensifiers or characterizations ("severe", "severely", "violating", "failure", "burnout", "critical") unless a source uses that wording.
+- Call a target a target and a deadline a deadline. Do not upgrade an action point agreed in a meeting into a "mandate", "rule" or "requirement".
+- Examples:
+  - Source: Crisis Board action point "BMS to ensure funds are available in the system within 48 hours"; funds loaded 19 March, five days after approval. Not: "BMS violated the 48-hour mandate." Instead: "Funds were loaded on 19 March, five days after approval, against a 48-hour target set by the Crisis Board."
+  - Source: staff worked 12-hour days for about two months without rotation; two took sick leave. Not: "severe burnout". Instead: "Staff worked 12-hour days for about two months without rotation; two took sick leave."
+  - Source: SURGE adviser said the remote period "did not work well" because colleagues couldn't reach them. Not: "severely diminished field responsiveness". Instead: "The adviser reported that the switch to remote support reduced their availability to field colleagues."
+
+COVERAGE
+- Gender is its own response area: put gender findings in their own findings matrix row(s) with responseArea "Gender", including any gender-based violence or protection risks respondents raised and whether they were followed up.
+- Where a respondent chose a rating on a scale (e.g. "Limited Integrated", "Somewhat Ineffective"), report that rating in the relevant section, attributed.
+- Every findings matrix row needs an "owner": whoever is best placed to act on the recommendation. Where respondents named who should act, use that.
+
+REVIEWER FLAGS
+- Use "reviewerFlags" for anything the human reviewer must check before the final draft:
+  - "conflict": sources disagree. Say what each source says, e.g. "The Crisis Bureau respondent says the CO requested SURGE late; the SURGE adviser says HQ approval was slow. Resolve before the final draft (this could be a factual error or a difference of opinion)."
+  - "single-source": an important claim in the section text rests on one source. (Findings matrix rows are checked for this automatically; don't flag them.)
+  - "thin-evidence": a section has little or no evidence behind it.
+  - "unsupported": a figure or date you included but couldn't confirm in a source.
+  - "omitted": a point a respondent raised that you couldn't fit into the draft.
+- Flags are notes to the reviewer only. Never mention them in the report text.
+
+FINAL CHECK
+- Before answering, re-read every number and date in your draft and confirm it appears in a source. Remove any that don't, or keep them and add an "unsupported" flag.`;
 
 export async function generateDraft(input: {
   overview: {
@@ -179,7 +276,19 @@ export async function generateDraft(input: {
   // or a file that fails to process) is named in the prompt so the model
   // knows it exists but can't read it, rather than the gap being
   // invisible or the whole request failing over one bad document.
-  const fileParts: { fileData: { fileUri: string; mimeType: string } }[] = [];
+  //
+  // Every source gets a "--- Source: <label> ---" header (PDFs included,
+  // as a text part right before the file) so the model can cite it by
+  // label in its "sources" fields.
+  const fileParts: (
+    | { text: string }
+    | { fileData: { fileUri: string; mimeType: string } }
+  )[] = [];
+  // PDF text is extracted separately just for the post-generation checks
+  // (the model reads the PDF itself). PDFs it can't get text out of are
+  // listed so the checks can say they couldn't search them.
+  const pdfTexts: string[] = [];
+  const unsearchablePdfs: string[] = [];
   const extractedTextBlocks: string[] = [];
   const unreadableDocuments: string[] = [];
 
@@ -193,19 +302,23 @@ export async function generateDraft(input: {
       }
       try {
         if (FILE_API_MIME_TYPES.has(mimeType)) {
-          const uploaded = await uploadAndWaitForActive(ai, {
-            mimeType,
-            buffer,
-            displayName: doc.name,
-          });
-          fileParts.push({ fileData: uploaded });
+          const [uploaded, pdfText] = await Promise.all([
+            uploadAndWaitForActive(ai, { mimeType, buffer, displayName: doc.name }),
+            extractPdfText(buffer).catch(() => ""),
+          ]);
+          fileParts.push(
+            { text: `--- Source: Document: ${doc.name} (attached PDF follows) ---` },
+            { fileData: uploaded },
+          );
+          if (pdfText) pdfTexts.push(pdfText);
+          else unsearchablePdfs.push(doc.name);
         } else if (INLINE_TEXT_MIME_TYPES.has(mimeType)) {
           const text = buffer.toString("utf-8");
-          extractedTextBlocks.push(`--- Document: ${doc.name} ---\n${text}`);
+          extractedTextBlocks.push(`--- Source: Document: ${doc.name} ---\n${text}`);
         } else if (EXTRACTABLE_MIME_TYPES.has(mimeType)) {
           const text = await extractDocumentText(mimeType, buffer);
           if (text?.trim()) {
-            extractedTextBlocks.push(`--- Document: ${doc.name} ---\n${text}`);
+            extractedTextBlocks.push(`--- Source: Document: ${doc.name} ---\n${text}`);
           } else {
             unreadableDocuments.push(doc.name);
           }
@@ -222,23 +335,23 @@ export async function generateDraft(input: {
   const respondedInvites = input.invites.filter(
     (i) => i.status === "Responded" && i.answers,
   );
-  const surveySections = respondedInvites.map((invite) => {
+  const surveyResponses = respondedInvites.map((invite) => {
     const template = input.templates.find((t) => t.id === invite.templateId);
-    const qa = template
-      ? template.questions
-          .map((q) => {
-            const answer = invite.answers?.[q.id]?.trim();
-            return answer ? `Q: ${q.text}\nA: ${answer}` : null;
-          })
-          .filter(Boolean)
-          .join("\n\n")
-      : "";
-    return `--- Survey response: ${invite.name} (${invite.role || "role not given"}, ${invite.unit || "unit not given"}) ---\n${qa}`;
+    const questions = (template?.questions ?? [])
+      .map((q) => ({ text: q.text, answer: invite.answers?.[q.id]?.trim() ?? "" }))
+      .filter((q) => q.answer);
+    const role = invite.role || template?.name || invite.unit || "role not given";
+    return { invite, role, questions };
+  });
+  const surveySections = surveyResponses.map(({ invite, role, questions }) => {
+    const qa = questions.map((q) => `Q: ${q.text}\nA: ${q.answer}`).join("\n\n");
+    return `--- Source: Survey: ${invite.name}, ${role} (unit: ${invite.unit || "not given"}) ---\n${qa}`;
   });
 
+  const notes = input.notes.trim();
   const contextText = [
     `AAR overview: country=${input.overview.country || "unspecified"}; crisis=${input.overview.crisisName || "unspecified"}; type=${input.overview.crisisType}; period=${input.overview.periodStart} to ${input.overview.periodEnd}; office=${input.overview.office || "unspecified"}.`,
-    input.notes.trim() ? `Notes from the reviewer:\n${input.notes.trim()}` : "",
+    notes ? `--- Source: Reviewer notes ---\n${notes}` : "",
     unreadableDocuments.length > 0
       ? `Note: the following attached documents could not be read by you (unsupported format or stored externally) -- do not fabricate their content, just be aware they exist and may need manual review: ${unreadableDocuments.join(", ")}.`
       : "",
@@ -262,7 +375,7 @@ export async function generateDraft(input: {
         },
       ],
       config: {
-        systemInstruction: input.prompt,
+        systemInstruction: `${input.prompt}\n\n${DRAFTING_RULES}`,
         responseMimeType: "application/json",
         responseSchema,
       },
@@ -273,8 +386,36 @@ export async function generateDraft(input: {
       return { ok: false, error: "Gemini returned an empty response." };
     }
 
-    const parsed = JSON.parse(text) as GeneratedDraft;
-    return { ok: true, draft: parsed, unreadableDocuments };
+    const { reviewerFlags: aiFlags, ...parsed } = JSON.parse(text) as ModelOutput;
+    const timeline = parsed.timeline ?? [];
+    const findingsMatrix = parsed.findingsMatrix ?? [];
+
+    const checkFlags = runDraftChecks({
+      draft: parsed,
+      timeline,
+      findingsMatrix,
+      sourceText: [
+        notes,
+        ...extractedTextBlocks,
+        ...pdfTexts,
+        ...surveyResponses.flatMap((r) => r.questions.map((q) => `${q.text}\n${q.answer}`)),
+      ].join("\n\n"),
+      unsearchedSources: unsearchablePdfs,
+    });
+    const reviewerFlags: ReviewerFlag[] = [
+      ...(aiFlags ?? []).map((flag) => ({ ...flag, origin: "ai" as const })),
+      ...checkFlags,
+    ].map((flag) => ({ ...flag, id: crypto.randomUUID(), resolved: false }));
+
+    const surveyRatings = extractSurveyRatings(
+      surveyResponses.map((r) => ({ respondent: r.role, questions: r.questions })),
+    );
+
+    return {
+      ok: true,
+      draft: { ...parsed, timeline, findingsMatrix, reviewerFlags, surveyRatings },
+      unreadableDocuments,
+    };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return { ok: false, error: message };

@@ -2,6 +2,7 @@ import "server-only";
 import mammoth from "mammoth";
 import ExcelJS from "exceljs";
 import JSZip from "jszip";
+import { extractText, getDocumentProxy } from "unpdf";
 
 // Word/Excel/PowerPoint aren't formats Gemini can read natively (unlike
 // PDF or plain text), so their text has to be pulled out here first and
@@ -66,6 +67,16 @@ async function extractPptxText(buffer: Buffer): Promise<string> {
     if (slideText) slides.push(`Slide ${i + 1}: ${slideText}`);
   }
   return truncate(slides.join("\n\n"));
+}
+
+// PDFs still go to Gemini as files (it reads layout and tables better than
+// this does); this text is only for the post-generation checks in
+// draft-checks.ts, which otherwise can't see inside PDFs at all. Scanned
+// PDFs with no text layer come back empty.
+export async function extractPdfText(buffer: Buffer): Promise<string> {
+  const pdf = await getDocumentProxy(new Uint8Array(buffer));
+  const { text } = await extractText(pdf, { mergePages: true });
+  return text.trim();
 }
 
 // Returns null for a mimeType this module doesn't handle -- callers

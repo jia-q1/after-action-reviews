@@ -10,7 +10,9 @@ import {
   type FindingRow,
   type Interviewee,
   type ResponseArea,
+  type ReviewerFlag,
   type ReviewStatus,
+  type SurveyRating,
   type TimelineEntry,
 } from "@/data/reviews";
 import { formatPeriod } from "@/lib/format";
@@ -43,6 +45,9 @@ import {
   MAX_FILE_BYTES,
   Panel,
   PendingUploadRow,
+  RecommendationsByOwner,
+  ReviewerFlagsPanel,
+  SurveyRatingsAnnex,
   SurveyResponseSummary,
   TimelineField,
   UploadIcon,
@@ -150,6 +155,9 @@ const RESPONSE_AREA_TO_FIELD: Record<ResponseArea, keyof Draft> = {
   Coordination: "coordination",
   "Communication and Resource Mobilization":
     "communicationAndResourceMobilization",
+  // No dedicated gender section in the template; gender integration is
+  // assessed as part of the programmatic response.
+  Gender: "programmaticResponse",
 };
 
 const EMPTY_DRAFT: Draft = {
@@ -303,6 +311,8 @@ function NewReviewWorkspace() {
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [findingsMatrix, setFindingsMatrix] = useState<FindingRow[]>([]);
   const [interviewees, setInterviewees] = useState<Interviewee[]>([]);
+  const [reviewerFlags, setReviewerFlags] = useState<ReviewerFlag[]>([]);
+  const [surveyRatings, setSurveyRatings] = useState<SurveyRating[]>([]);
   const [lastSaveTime, setLastSaveTime] = useState<Date | null>(null);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -365,6 +375,8 @@ function NewReviewWorkspace() {
         setTimeline(record.analysis.timeline);
         setFindingsMatrix(record.findingsMatrix);
         setInterviewees(record.interviewees);
+        setReviewerFlags(record.reviewerFlags ?? []);
+        setSurveyRatings(record.surveyRatings ?? []);
 
         if (record.stage === "Awaiting Survey Responses") setStep(2);
         else if (record.executiveSummary) setStep(4);
@@ -439,7 +451,7 @@ function NewReviewWorkspace() {
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slug, overview, documents, notes, draft, timeline, findingsMatrix, interviewees, recordStatus, tags]);
+  }, [slug, overview, documents, notes, draft, timeline, findingsMatrix, interviewees, reviewerFlags, recordStatus, tags]);
 
   const isOtherCrisisType = !(crisisTypes as readonly string[]).includes(
     overview.crisisType,
@@ -666,6 +678,8 @@ function NewReviewWorkspace() {
       recommendations,
       findingsMatrix,
       interviewees,
+      surveyRatings,
+      reviewerFlags,
       documents,
       notes,
       prompt,
@@ -709,6 +723,15 @@ function NewReviewWorkspace() {
 
   async function handleCompleteAar() {
     if (!slug) return;
+    const unresolved = reviewerFlags.filter((f) => !f.resolved).length;
+    if (
+      unresolved > 0 &&
+      !window.confirm(
+        `${unresolved} reviewer item${unresolved === 1 ? " is" : "s are"} still unresolved. Complete the AAR anyway?`,
+      )
+    ) {
+      return;
+    }
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     setRecordStatus("Completed");
     await saveRecord(buildRecord({ status: "Completed" }));
@@ -896,13 +919,26 @@ function NewReviewWorkspace() {
       }
 
       const body = (await res.json()) as {
-        draft: Draft & { timeline: TimelineEntry[]; findingsMatrix: FindingRow[] };
+        draft: Draft & {
+          timeline: TimelineEntry[];
+          findingsMatrix: FindingRow[];
+          reviewerFlags: ReviewerFlag[];
+          surveyRatings: SurveyRating[];
+        };
         unreadableDocuments: string[];
       };
-      const { timeline: aiTimeline, findingsMatrix: aiFindingsMatrix, ...draftFields } = body.draft;
+      const {
+        timeline: aiTimeline,
+        findingsMatrix: aiFindingsMatrix,
+        reviewerFlags: aiFlags,
+        surveyRatings: aiRatings,
+        ...draftFields
+      } = body.draft;
       setDraft(draftFields);
       setTimeline(aiTimeline ?? []);
       setFindingsMatrix(aiFindingsMatrix ?? []);
+      setReviewerFlags(aiFlags ?? []);
+      setSurveyRatings(aiRatings ?? []);
       if (body.unreadableDocuments?.length > 0) {
         setGenerateWarning(
           `The AI couldn't read: ${body.unreadableDocuments.join(", ")}. Review these documents manually.`,
@@ -1981,6 +2017,7 @@ function NewReviewWorkspace() {
                       {generateWarning}
                     </p>
                   )}
+                  <ReviewerFlagsPanel flags={reviewerFlags} onChange={setReviewerFlags} />
                   {documents.length > 0 && (
                     <div className="flex flex-wrap gap-1.5">
                       {documents.map((doc) => (
@@ -2122,6 +2159,7 @@ function NewReviewWorkspace() {
                       <MatrixField
                         rows={findingsMatrix}
                         onChange={setFindingsMatrix}
+                        respondentCount={invites.filter((i) => i.status === "Responded").length}
                       />
                     </div>
                   </div>
@@ -2151,24 +2189,12 @@ function NewReviewWorkspace() {
                     <h3 className="font-serif text-base font-semibold text-un-ink border-b border-un-border pb-2">
                       4.2 Actionable recommendations
                     </h3>
-                    {recommendations.length > 0 ? (
-                      <ul className="mt-3 space-y-2 text-sm">
-                        {recommendations.map((r, i) => (
-                          <li key={i} className="flex gap-2">
-                            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-un-blue-600" />
-                            <span className="text-un-ink/90">{r}</span>
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="mt-2 text-sm text-un-muted">
-                        Add rows to the Annex 7 matrix above to populate
-                        this section.
-                      </p>
-                    )}
+                    <RecommendationsByOwner rows={findingsMatrix} />
                   </div>
 
                   <Bibliography documents={documents} />
+
+                  <SurveyRatingsAnnex ratings={surveyRatings} />
 
                   <div>
                     <div className="flex items-center justify-between border-b border-un-border pb-2">

@@ -27,9 +27,26 @@ export const responseAreas = [
   "Operational Response",
   "Coordination",
   "Communication and Resource Mobilization",
+  // Not a numbered analysis section in the template, but gender findings
+  // need their own matrix row -- without it they were folded into other
+  // areas or dropped entirely.
+  "Gender",
 ] as const;
 
 export type ResponseArea = (typeof responseAreas)[number];
+
+// Who a recommendation is addressed to -- the same units the surveys'
+// closing recommendations question asks respondents about, so 4.2 can be
+// grouped by who has to act.
+export const recommendationOwners = [
+  "Crisis Bureau",
+  "Regional Bureau",
+  "Country Office",
+  "SURGE mechanism",
+  "BERA",
+  "BMS",
+  "BPPS",
+] as const;
 
 export const dataCollectionMethods = [
   "Desk review",
@@ -216,7 +233,7 @@ export const surveyTemplates: SurveyTemplate[] = [
     audience: "Country Office Gender focal point",
     description:
       "How well gender considerations were integrated into the crisis response and programming.",
-    informsSections: ["Programmatic Response", "Country Office Response Structure and Capacities"],
+    informsSections: ["Gender", "Programmatic Response", "Country Office Response Structure and Capacities"],
     questions: [
       "To what extent were gender considerations integrated into the crisis response? (Strongly Integrated / Moderately Integrated / Limited Integrated / Not Integrated.) Please explain.",
       "Please provide examples of good practices in gender integration in crisis response.",
@@ -267,7 +284,11 @@ export const surveyTemplates: SurveyTemplate[] = [
   },
 ];
 
-export type TimelineEntry = { date: string; event: string };
+// `sources` holds the labels of the documents/survey responses an AI-drafted
+// entry is based on (e.g. "Survey: Jane Doe, SURGE Advisor"), shown to the
+// reviewer in the editor but never in the exported report. Optional because
+// hand-entered rows and older drafts don't have them.
+export type TimelineEntry = { date: string; event: string; sources?: string[] };
 
 export type FindingRow = {
   responseArea: ResponseArea;
@@ -275,7 +296,56 @@ export type FindingRow = {
   recommendation: string;
   keyActions: string;
   priority: PriorityLevel;
+  owner?: string;
+  sources?: string[];
 };
+
+// A scaled answer (e.g. "Limited Integrated") pulled straight out of a
+// survey response, for the Annex 5 results table -- extracted in code
+// rather than left to the AI, which tended to drop them.
+export type SurveyRating = { respondent: string; question: string; rating: string };
+
+// Something the reviewer needs to check before the final draft. Raised
+// either by the AI itself ("ai") or by the automated checks run on its
+// output ("check"). Workspace-only: never shown in the view page or export.
+export type ReviewerFlagType =
+  | "conflict"
+  | "single-source"
+  | "unsupported"
+  | "thin-evidence"
+  | "omitted"
+  | "wording";
+
+export type ReviewerFlag = {
+  id: string;
+  type: ReviewerFlagType;
+  section: string;
+  description: string;
+  sources: string[];
+  origin: "ai" | "check";
+  resolved: boolean;
+};
+
+// 4.2 groups recommendations by who should act on them. Rows without an
+// owner (hand-entered, or drafted before owners existed) go last.
+export function groupRecommendationsByOwner(
+  rows: FindingRow[],
+): { owner: string; recommendations: string[] }[] {
+  const groups = new Map<string, string[]>();
+  for (const row of rows) {
+    if (!row.recommendation.trim()) continue;
+    const owner = row.owner?.trim() || "Owner not specified";
+    groups.set(owner, [...(groups.get(owner) ?? []), row.recommendation]);
+  }
+  const rank = (owner: string) => {
+    if (owner === "Owner not specified") return recommendationOwners.length + 1;
+    const i = (recommendationOwners as readonly string[]).indexOf(owner);
+    return i === -1 ? recommendationOwners.length : i;
+  };
+  return [...groups.entries()]
+    .sort(([a], [b]) => rank(a) - rank(b))
+    .map(([owner, recommendations]) => ({ owner, recommendations }));
+}
 
 export type Interviewee = { name: string; title: string; agency: string };
 
@@ -326,6 +396,7 @@ export type Review = {
   recommendations: string[];
   findingsMatrix: FindingRow[];
   interviewees: Interviewee[];
+  surveyRatings?: SurveyRating[];
 };
 
 function year(value: string) {

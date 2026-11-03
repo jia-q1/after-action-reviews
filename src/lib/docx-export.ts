@@ -12,6 +12,7 @@ import {
   BorderStyle,
 } from "docx";
 import type { AarRecord } from "@/lib/aar-store";
+import { groupRecommendationsByOwner, type SurveyRating } from "@/data/reviews";
 import { formatMonthYear } from "@/lib/format";
 
 const HEADER_FILL = "0C2A4E"; // un-blue-950
@@ -93,6 +94,7 @@ function findingsMatrixTable(review: AarRecord): Table {
           headerCell("Finding"),
           headerCell("Recommendation"),
           headerCell("Key actions required"),
+          headerCell("Owner"),
           headerCell("Priority"),
         ],
       }),
@@ -104,8 +106,27 @@ function findingsMatrixTable(review: AarRecord): Table {
               bodyCell(row.finding),
               bodyCell(row.recommendation),
               bodyCell(row.keyActions),
+              bodyCell(row.owner || "—"),
               bodyCell(row.priority),
             ],
+          }),
+      ),
+    ],
+  });
+}
+
+function surveyRatingsTable(ratings: SurveyRating[]): Table {
+  return new Table({
+    width: { size: 100, type: WidthType.PERCENTAGE },
+    rows: [
+      new TableRow({
+        tableHeader: true,
+        children: [headerCell("Question"), headerCell("Respondent"), headerCell("Rating")],
+      }),
+      ...ratings.map(
+        (r) =>
+          new TableRow({
+            children: [bodyCell(r.question), bodyCell(r.respondent), bodyCell(r.rating)],
           }),
       ),
     ],
@@ -265,7 +286,14 @@ export async function buildAarDocx(review: AarRecord): Promise<Buffer> {
   children.push(heading("4.1 Key findings and lessons learned", HeadingLevel.HEADING_2));
   children.push(...bulletList(review.keyFindings));
   children.push(heading("4.2 Actionable recommendations", HeadingLevel.HEADING_2));
-  children.push(...bulletList(review.recommendations));
+  if (review.findingsMatrix.some((row) => row.owner)) {
+    for (const group of groupRecommendationsByOwner(review.findingsMatrix)) {
+      children.push(heading(group.owner, HeadingLevel.HEADING_3));
+      children.push(...bulletList(group.recommendations));
+    }
+  } else {
+    children.push(...bulletList(review.recommendations));
+  }
 
   if (review.findingsMatrix.length > 0) {
     children.push(
@@ -292,6 +320,11 @@ export async function buildAarDocx(review: AarRecord): Promise<Buffer> {
   if (review.interviewees.length > 0) {
     children.push(heading("Annex 3: List of People Interviewed", HeadingLevel.HEADING_1));
     children.push(intervieweeTable(review));
+  }
+
+  if (review.surveyRatings && review.surveyRatings.length > 0) {
+    children.push(heading("Annex 5: Survey Ratings", HeadingLevel.HEADING_1));
+    children.push(surveyRatingsTable(review.surveyRatings));
   }
 
   const doc = new Document({

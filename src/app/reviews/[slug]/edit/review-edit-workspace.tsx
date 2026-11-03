@@ -9,7 +9,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { dataCollectionMethods, type FindingRow, type Interviewee, type TimelineEntry } from "@/data/reviews";
+import {
+  dataCollectionMethods,
+  type FindingRow,
+  type Interviewee,
+  type ReviewerFlag,
+  type SurveyRating,
+  type TimelineEntry,
+} from "@/data/reviews";
 import { formatPeriod } from "@/lib/format";
 import {
   getRecord,
@@ -32,6 +39,9 @@ import {
   MAX_FILE_BYTES,
   Panel,
   PendingUploadRow,
+  RecommendationsByOwner,
+  ReviewerFlagsPanel,
+  SurveyRatingsAnnex,
   SurveyResponseSummary,
   TimelineField,
   UploadIcon,
@@ -71,6 +81,8 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [findingsMatrix, setFindingsMatrix] = useState<FindingRow[]>([]);
   const [interviewees, setInterviewees] = useState<Interviewee[]>([]);
+  const [reviewerFlags, setReviewerFlags] = useState<ReviewerFlag[]>([]);
+  const [surveyRatings, setSurveyRatings] = useState<SurveyRating[]>([]);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -130,6 +142,8 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
       setTimeline(rec.analysis.timeline);
       setFindingsMatrix(rec.findingsMatrix);
       setInterviewees(rec.interviewees);
+      setReviewerFlags(rec.reviewerFlags ?? []);
+      setSurveyRatings(rec.surveyRatings ?? []);
       setLoading(false);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -183,6 +197,8 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
       recommendations,
       findingsMatrix,
       interviewees,
+      surveyRatings,
+      reviewerFlags,
       updatedAt: new Date().toISOString(),
     };
   }
@@ -199,6 +215,15 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
   }
 
   async function handleComplete() {
+    const unresolved = reviewerFlags.filter((f) => !f.resolved).length;
+    if (
+      unresolved > 0 &&
+      !window.confirm(
+        `${unresolved} reviewer item${unresolved === 1 ? " is" : "s are"} still unresolved. Complete the AAR anyway?`,
+      )
+    ) {
+      return;
+    }
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     const updated = buildUpdatedRecord("Completed");
     if (!updated) return;
@@ -254,13 +279,26 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
       }
 
       const body = (await res.json()) as {
-        draft: Draft & { timeline: TimelineEntry[]; findingsMatrix: FindingRow[] };
+        draft: Draft & {
+          timeline: TimelineEntry[];
+          findingsMatrix: FindingRow[];
+          reviewerFlags: ReviewerFlag[];
+          surveyRatings: SurveyRating[];
+        };
         unreadableDocuments: string[];
       };
-      const { timeline: aiTimeline, findingsMatrix: aiFindingsMatrix, ...draftFields } = body.draft;
+      const {
+        timeline: aiTimeline,
+        findingsMatrix: aiFindingsMatrix,
+        reviewerFlags: aiFlags,
+        surveyRatings: aiRatings,
+        ...draftFields
+      } = body.draft;
       setDraft(draftFields);
       setTimeline(aiTimeline ?? []);
       setFindingsMatrix(aiFindingsMatrix ?? []);
+      setReviewerFlags(aiFlags ?? []);
+      setSurveyRatings(aiRatings ?? []);
       if (body.unreadableDocuments?.length > 0) {
         setGenerateWarning(
           `The AI couldn't read: ${body.unreadableDocuments.join(", ")}. Review these documents manually.`,
@@ -296,7 +334,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
       if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [documents, draft, timeline, findingsMatrix, interviewees]);
+  }, [documents, draft, timeline, findingsMatrix, interviewees, reviewerFlags]);
 
   async function addFiles(fileList: FileList | null) {
     if (!fileList || fileList.length === 0) return;
@@ -647,6 +685,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
                   {generateWarning}
                 </p>
               )}
+              <ReviewerFlagsPanel flags={reviewerFlags} onChange={setReviewerFlags} />
 
               <ArtifactField
                 label="Executive Summary"
@@ -769,6 +808,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
                   <MatrixField
                     rows={findingsMatrix}
                     onChange={setFindingsMatrix}
+                    respondentCount={invites.filter((i) => i.status === "Responded").length}
                   />
                 </div>
               </div>
@@ -798,24 +838,12 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
                 <h3 className="font-serif text-base font-semibold text-un-ink border-b border-un-border pb-2">
                   4.2 Actionable recommendations
                 </h3>
-                {recommendations.length > 0 ? (
-                  <ul className="mt-3 space-y-2 text-sm">
-                    {recommendations.map((r, i) => (
-                      <li key={i} className="flex gap-2">
-                        <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-un-blue-600" />
-                        <span className="text-un-ink/90">{r}</span>
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p className="mt-2 text-sm text-un-muted">
-                    Add rows to the Annex 7 matrix above to populate this
-                    section.
-                  </p>
-                )}
+                <RecommendationsByOwner rows={findingsMatrix} />
               </div>
 
               <Bibliography documents={documents} />
+
+              <SurveyRatingsAnnex ratings={surveyRatings} />
 
               <div>
                 <div className="flex items-center justify-between border-b border-un-border pb-2">

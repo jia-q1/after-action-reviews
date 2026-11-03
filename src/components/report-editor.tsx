@@ -6,12 +6,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import {
+  groupRecommendationsByOwner,
   priorityLevels,
+  recommendationOwners,
   responseAreas,
   type FindingRow,
   type Interviewee,
   type PriorityLevel,
   type ResponseArea,
+  type ReviewerFlag,
+  type ReviewerFlagType,
+  type SurveyRating,
   type TimelineEntry,
 } from "@/data/reviews";
 import { upload } from "@vercel/blob/client";
@@ -226,7 +231,10 @@ export function TimelineField({
               <span className="w-20 shrink-0 font-mono text-xs text-un-blue-700">
                 {entry.date || "no date"}
               </span>
-              <span className="flex-1 text-un-ink">{entry.event}</span>
+              <span className="flex-1 text-un-ink">
+                {entry.event}
+                <SourceList sources={entry.sources} />
+              </span>
               <button
                 type="button"
                 onClick={() => remove(index)}
@@ -376,12 +384,41 @@ const EMPTY_MATRIX_ROW: FindingRow = {
   priority: "Medium",
 };
 
+// Reviewer-only: which sources an AI-drafted entry is based on. Renders
+// nothing for hand-entered entries (no sources recorded).
+function SourceList({ sources }: { sources?: string[] }) {
+  if (!sources || sources.length === 0) return null;
+  return (
+    <span className="mt-0.5 block text-[0.7rem] text-un-muted">
+      Sources: {sources.join("; ")}
+    </span>
+  );
+}
+
+// "2 of 7 respondents, 1 document" -- how widely a finding is supported.
+function supportSummary(sources: string[], respondentCount: number): string {
+  const surveys = sources.filter((s) => s.startsWith("Survey:")).length;
+  const others = sources.length - surveys;
+  const parts: string[] = [];
+  if (surveys > 0) {
+    parts.push(
+      respondentCount > 0
+        ? `${surveys} of ${respondentCount} respondent${respondentCount === 1 ? "" : "s"}`
+        : `${surveys} respondent${surveys === 1 ? "" : "s"}`,
+    );
+  }
+  if (others > 0) parts.push(`${others} document${others === 1 ? "" : "s"}`);
+  return parts.join(", ");
+}
+
 export function MatrixField({
   rows,
   onChange,
+  respondentCount = 0,
 }: {
   rows: FindingRow[];
   onChange: (rows: FindingRow[]) => void;
+  respondentCount?: number;
 }) {
   const [formOpen, setFormOpen] = useState(false);
   const [form, setForm] = useState<FindingRow>(EMPTY_MATRIX_ROW);
@@ -414,6 +451,25 @@ export function MatrixField({
                   <span className="ml-2 rounded-full bg-white px-2 py-0.5 text-[0.65rem] font-semibold text-un-blue-700 ring-1 ring-un-blue-200">
                     {row.priority}
                   </span>
+                  {row.owner && (
+                    <span className="ml-1.5 rounded-full bg-white px-2 py-0.5 text-[0.65rem] font-semibold text-un-ink ring-1 ring-un-border">
+                      Owner: {row.owner}
+                    </span>
+                  )}
+                  {row.sources && (
+                    <span
+                      className={
+                        "ml-1.5 rounded-full px-2 py-0.5 text-[0.65rem] font-semibold ring-1 " +
+                        (row.sources.length <= 1
+                          ? "bg-un-gold-100 text-un-gold-700 ring-un-gold-500/40"
+                          : "bg-white text-un-muted ring-un-border")
+                      }
+                    >
+                      {row.sources.length === 0
+                        ? "No source cited"
+                        : supportSummary(row.sources, respondentCount)}
+                    </span>
+                  )}
                 </div>
                 <button
                   type="button"
@@ -428,6 +484,7 @@ export function MatrixField({
               <p className="mt-1 text-xs text-un-muted">
                 &rarr; {row.recommendation}
               </p>
+              <SourceList sources={row.sources} />
             </li>
           ))}
         </ul>
@@ -473,6 +530,22 @@ export function MatrixField({
               </select>
             </Field>
           </div>
+          <Field label="Owner (who should act)">
+            <select
+              value={form.owner ?? ""}
+              onChange={(e) =>
+                setForm((f) => ({ ...f, owner: e.target.value || undefined }))
+              }
+              className="input"
+            >
+              <option value="">Not specified</option>
+              {recommendationOwners.map((owner) => (
+                <option key={owner} value={owner}>
+                  {owner}
+                </option>
+              ))}
+            </select>
+          </Field>
           <Field label="Finding">
             <input
               value={form.finding}
@@ -688,6 +761,173 @@ export function Bibliography({ documents }: { documents: DocumentSource[] }) {
         <p className="mt-2 text-sm text-un-muted">
           No source documents attached yet.
         </p>
+      )}
+    </div>
+  );
+}
+
+// 4.2, grouped by who should act. Derived from the matrix like 4.1.
+export function RecommendationsByOwner({ rows }: { rows: FindingRow[] }) {
+  const groups = groupRecommendationsByOwner(rows);
+  if (groups.length === 0) {
+    return (
+      <p className="mt-2 text-sm text-un-muted">
+        Add rows to the Annex 7 matrix above to populate this section.
+      </p>
+    );
+  }
+  return (
+    <div className="mt-3 space-y-3">
+      {groups.map((group) => (
+        <div key={group.owner}>
+          <p className="text-xs font-semibold uppercase tracking-wide text-un-blue-600">
+            {group.owner}
+          </p>
+          <ul className="mt-1.5 space-y-2 text-sm">
+            {group.recommendations.map((r, i) => (
+              <li key={i} className="flex gap-2">
+                <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-un-blue-600" />
+                <span className="text-un-ink/90">{r}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// Annex 5: the scaled answers respondents picked, straight from the surveys.
+export function SurveyRatingsAnnex({ ratings }: { ratings: SurveyRating[] }) {
+  return (
+    <div>
+      <div className="flex items-center justify-between border-b border-un-border pb-2">
+        <h3 className="font-serif text-base font-semibold text-un-ink">
+          Annex 5: Survey ratings
+        </h3>
+        <span className="text-xs text-un-muted">
+          {ratings.length} rating{ratings.length === 1 ? "" : "s"}
+        </span>
+      </div>
+      {ratings.length > 0 ? (
+        <ul className="mt-3 space-y-1.5">
+          {ratings.map((r, i) => (
+            <li
+              key={i}
+              className="rounded-lg border border-un-border bg-un-blue-50/40 px-3 py-1.5 text-sm"
+            >
+              <span className="text-un-ink/90">{r.question}</span>
+              <span className="mt-0.5 block text-xs text-un-muted">
+                {r.respondent}:{" "}
+                <span className="font-semibold text-un-ink">{r.rating}</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-sm text-un-muted">
+          Filled in from scaled survey answers when the draft is generated.
+        </p>
+      )}
+    </div>
+  );
+}
+
+const FLAG_LABELS: Record<ReviewerFlagType, string> = {
+  conflict: "Sources disagree",
+  "single-source": "One source only",
+  unsupported: "Not found in sources",
+  "thin-evidence": "Thin evidence",
+  omitted: "Left out of draft",
+  wording: "Loaded wording",
+};
+
+const FLAG_ORDER: ReviewerFlagType[] = [
+  "conflict",
+  "unsupported",
+  "single-source",
+  "wording",
+  "thin-evidence",
+  "omitted",
+];
+
+// "For the reviewer": everything the AI or the automated checks think a
+// human needs to look at before the final draft. Ticking one off only
+// marks it resolved -- fixing the text is still the reviewer's job.
+export function ReviewerFlagsPanel({
+  flags,
+  onChange,
+}: {
+  flags: ReviewerFlag[];
+  onChange: (flags: ReviewerFlag[]) => void;
+}) {
+  const [showResolved, setShowResolved] = useState(false);
+  if (flags.length === 0) return null;
+
+  const open = flags.filter((f) => !f.resolved).length;
+  const visible = flags
+    .filter((f) => showResolved || !f.resolved)
+    .sort((a, b) => FLAG_ORDER.indexOf(a.type) - FLAG_ORDER.indexOf(b.type));
+
+  function toggle(id: string) {
+    onChange(flags.map((f) => (f.id === id ? { ...f, resolved: !f.resolved } : f)));
+  }
+
+  return (
+    <div className="rounded-xl border border-un-gold-500/40 bg-un-gold-100/40 px-4 py-3">
+      <div className="flex items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold text-un-ink">For the reviewer</h3>
+          <p className="text-xs text-un-muted">
+            {open > 0
+              ? `${open} of ${flags.length} item${flags.length === 1 ? "" : "s"} to resolve before the final draft. Not included in the exported report.`
+              : `All ${flags.length} items resolved.`}
+          </p>
+        </div>
+        {flags.length > open && (
+          <button
+            type="button"
+            onClick={() => setShowResolved((v) => !v)}
+            className="shrink-0 text-xs font-semibold text-un-blue-700 hover:text-un-blue-600"
+          >
+            {showResolved ? "Hide resolved" : "Show resolved"}
+          </button>
+        )}
+      </div>
+      {visible.length > 0 && (
+        <ul className="mt-3 max-h-[28rem] space-y-2 overflow-y-auto pr-1">
+          {visible.map((flag) => (
+            <li
+              key={flag.id}
+              className={
+                "flex gap-2.5 rounded-lg border border-un-border bg-un-surface px-3 py-2 text-sm " +
+                (flag.resolved ? "opacity-60" : "")
+              }
+            >
+              <input
+                type="checkbox"
+                checked={flag.resolved}
+                onChange={() => toggle(flag.id)}
+                aria-label="Mark resolved"
+                className="mt-1 shrink-0"
+              />
+              <div className="min-w-0">
+                <p className="text-xs">
+                  <span className="font-semibold text-un-gold-700">
+                    {FLAG_LABELS[flag.type] ?? flag.type}
+                  </span>
+                  <span className="text-un-muted"> &middot; {flag.section}</span>
+                </p>
+                <p className="mt-0.5 text-un-ink/90">{flag.description}</p>
+                {flag.sources.length > 0 && (
+                  <p className="mt-0.5 text-[0.7rem] text-un-muted">
+                    Sources: {flag.sources.join("; ")}
+                  </p>
+                )}
+              </div>
+            </li>
+          ))}
+        </ul>
       )}
     </div>
   );

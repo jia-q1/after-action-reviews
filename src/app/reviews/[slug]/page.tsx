@@ -1,6 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { priorityStyles, type Review } from "@/data/reviews";
+import {
+  groupRecommendationsByOwner,
+  priorityStyles,
+  type Review,
+  type SurveyRating,
+} from "@/data/reviews";
 import { getRecordBySlug } from "@/lib/db";
 import type { DocumentSource } from "@/lib/aar-store";
 import StatusBadge from "@/components/status-badge";
@@ -144,7 +149,18 @@ export default async function ReviewPage({
                   )}
                 </SubSection>
                 <SubSection title="4.2 Actionable recommendations">
-                  {review.recommendations.length > 0 ? (
+                  {review.findingsMatrix.some((row) => row.owner) ? (
+                    <div className="space-y-4">
+                      {groupRecommendationsByOwner(review.findingsMatrix).map((group) => (
+                        <div key={group.owner}>
+                          <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-un-blue-600">
+                            {group.owner}
+                          </p>
+                          <BulletList items={group.recommendations} tone="action" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : review.recommendations.length > 0 ? (
                     <BulletList items={review.recommendations} tone="action" />
                   ) : (
                     <EmptyNote />
@@ -167,6 +183,12 @@ export default async function ReviewPage({
               {review.interviewees.length > 0 && (
                 <Section title="Annex 3: List of People Interviewed">
                   <IntervieweeList review={review} />
+                </Section>
+              )}
+
+              {(review.surveyRatings?.length ?? 0) > 0 && (
+                <Section title="Annex 5: Survey Ratings">
+                  <SurveyRatingsTable ratings={review.surveyRatings ?? []} />
                 </Section>
               )}
             </div>
@@ -375,6 +397,7 @@ function FindingsMatrix({ review }: { review: Review }) {
             <th className="px-3 py-2.5 font-semibold">Finding</th>
             <th className="px-3 py-2.5 font-semibold">Recommendation</th>
             <th className="px-3 py-2.5 font-semibold">Key actions required</th>
+            <th className="px-3 py-2.5 font-semibold">Owner</th>
             <th className="px-3 py-2.5 font-semibold">Priority</th>
           </tr>
         </thead>
@@ -392,12 +415,43 @@ function FindingsMatrix({ review }: { review: Review }) {
                 {row.recommendation}
               </td>
               <td className="px-3 py-3 text-un-ink/90">{row.keyActions}</td>
+              <td className="px-3 py-3 text-un-ink/90">{row.owner || "—"}</td>
               <td className="px-3 py-3">
                 <span
                   className={`inline-block whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-semibold ${priorityStyles[row.priority]}`}
                 >
                   {row.priority}
                 </span>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function SurveyRatingsTable({ ratings }: { ratings: SurveyRating[] }) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-un-border">
+      <table className="w-full min-w-[560px] text-left text-sm">
+        <thead className="bg-un-blue-950 text-white">
+          <tr>
+            <th className="px-3 py-2.5 font-semibold">Question</th>
+            <th className="px-3 py-2.5 font-semibold">Respondent</th>
+            <th className="px-3 py-2.5 font-semibold">Rating</th>
+          </tr>
+        </thead>
+        <tbody>
+          {ratings.map((r, index) => (
+            <tr
+              key={index}
+              className="border-t border-un-border align-top odd:bg-un-surface even:bg-un-blue-50/30"
+            >
+              <td className="px-3 py-3 text-un-ink/90">{r.question}</td>
+              <td className="px-3 py-3 text-un-ink/90">{r.respondent}</td>
+              <td className="px-3 py-3 font-medium text-un-ink whitespace-nowrap">
+                {r.rating}
               </td>
             </tr>
           ))}
