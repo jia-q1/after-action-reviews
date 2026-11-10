@@ -57,22 +57,38 @@ function draftTexts(input: {
 
 // --- Figures -------------------------------------------------------------
 
+// Accepts English ("1,200,000", "6.8 million"), French/Spanish-style
+// ("1 200 000", "6,8 millions") and percent spelled out in either.
 const NUMBER_PATTERN =
-  /(USD|US\$|\$|EUR|€)?\s?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s?(million|billion|thousand|bn|m|k)?\b\s?(%|percent|per cent)?/gi;
+  /(USD|US\$|\$|EUR|€)?\s?(?<![\d.,])(\d{1,3}(?:[,   ]\d{3})+(?:\.\d+)?|\d+(?:[.,]\d{1,2}(?!\d))?(?:\.\d+)?)\s?(millions?|millones|milliards?|billions?|thousands?|bn|m|k)?\b\s?(%|percent|per cent|pour cent|por ciento)?/gi;
 
-const MULTIPLIERS: Record<string, number> = {
-  thousand: 1e3,
-  k: 1e3,
-  million: 1e6,
-  m: 1e6,
-  billion: 1e9,
-  bn: 1e9,
-};
+function multiplier(suffix: string): number {
+  const s = suffix.toLowerCase();
+  if (s === "k" || s.startsWith("thousand")) return 1e3;
+  if (s === "bn" || s.startsWith("billion") || s.startsWith("milliard")) return 1e9;
+  return 1e6; // m, million(s), millones
+}
+
+// "1,200,000" / "1 200 000" -> 1200000; "6,8" (one or two digits after
+// the comma) is a decimal comma -> 6.8.
+function parseNumber(digits: string): number {
+  if (/^\d{1,3}(?:[,   ]\d{3})+/.test(digits)) {
+    return Number(digits.replace(/[,   ]/g, ""));
+  }
+  return Number(digits.replace(",", "."));
+}
 
 // `baseKey` is the number as written, before applying "million" etc. --
 // tables often put the unit in the column header ("USD million") and list
 // bare numbers, so "USD 203.3 million" in a draft should match "203.3".
-type Figure = { raw: string; key: string; baseKey: string | null; checkable: boolean };
+type Figure = {
+  raw: string;
+  key: string;
+  baseKey: string | null;
+  checkable: boolean;
+  // No currency, unit or percent sign -- e.g. a number in a table cell.
+  bare: boolean;
+};
 
 // Normalizes "USD 6.8M", "6.8 million" and "6,800,000" to the same key so
 // a figure the AI reformatted still matches its source.
@@ -80,9 +96,9 @@ function extractFigures(text: string): Figure[] {
   const figures: Figure[] = [];
   for (const match of text.matchAll(NUMBER_PATTERN)) {
     const [raw, currency, digits, suffix, percent] = match;
-    const base = Number(digits.replace(/,/g, ""));
+    const base = parseNumber(digits);
     if (!Number.isFinite(base)) continue;
-    const value = base * (suffix ? MULTIPLIERS[suffix.toLowerCase()] : 1);
+    const value = base * (suffix ? multiplier(suffix) : 1);
     const isPercent = Boolean(percent);
     const key = `${isPercent ? "%" : ""}${Math.round(value * 100)}`;
     // Small bare numbers ("two staff", "18 days", section numbers) are
@@ -92,23 +108,37 @@ function extractFigures(text: string): Figure[] {
     const checkable =
       !isYear && (Boolean(currency) || Boolean(suffix) || isPercent || value >= 100);
     const baseKey = suffix ? `${Math.round(base * 100)}` : null;
-    figures.push({ raw: raw.trim(), key, baseKey, checkable });
+    const bare = !currency && !suffix && !isPercent;
+    figures.push({ raw: raw.trim(), key, baseKey, checkable, bare });
   }
   return figures;
 }
 
 // --- Dates ---------------------------------------------------------------
 
-const MONTHS = [
-  "jan", "feb", "mar", "apr", "may", "jun",
-  "jul", "aug", "sep", "oct", "nov", "dec",
-];
-const MONTH_NAME = "(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|june?|july?|aug(?:ust)?|sep(?:t(?:ember)?)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)";
+// English, Spanish and French month names -- source documents from
+// Country Offices are often in Spanish or French even when the AAR is
+// drafted in English.
+const MONTH_PATTERNS = [
+  "jan(?:uary)?|enero|janv(?:ier)?",
+  "feb(?:ruary)?|febrero|f[ée]v(?:rier)?",
+  "mar(?:ch)?|marzo|mars",
+  "apr(?:il)?|abril|avr(?:il)?",
+  "may|mayo|mai",
+  "june?|junio|juin",
+  "july?|julio|juil(?:let)?",
+  "aug(?:ust)?|agosto|ao[uû]t",
+  "sep(?:t(?:ember)?)?|se(?:p)?tiembre|septembre",
+  "oct(?:ober)?|octubre|octobre",
+  "nov(?:ember)?|noviembre|novembre",
+  "dec(?:ember)?|diciembre|d[ée]c(?:embre)?",
+].map((pattern) => new RegExp(`^(?:${pattern})$`, "i"));
+const MONTH_NAME = `(${MONTH_PATTERNS.map((re) => re.source.slice(4, -2)).join("|")})`;
 // Also catches lists and ranges sharing one month: "8 and 15 March",
-// "2 to 4 March", "3, 9 and 12 May".
-const DAY = "\\d{1,2}(?:st|nd|rd|th)?";
+// "2 to 4 March", "3, 9 and 12 May", "8 y 15 de marzo", "1er mars".
+const DAY = "\\d{1,2}(?:st|nd|rd|th|er)?";
 const DAY_MONTH = new RegExp(
-  `\\b(${DAY}(?:\\s*(?:,|and|&|to|-|–)\\s*${DAY})*)\\s+(?:of\\s+)?${MONTH_NAME}\\b`,
+  `\\b(${DAY}(?:\\s*(?:,|and|y|et|&|to|al|au|-|–)\\s*${DAY})*)\\s+(?:(?:of|de|du)\\s+)?${MONTH_NAME}\\b`,
   "gi",
 );
 const MONTH_DAY = new RegExp(`\\b${MONTH_NAME}\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, "gi");
@@ -116,7 +146,7 @@ const ISO_DATE = /\b(\d{4})-(\d{1,2})-(\d{1,2})\b/g;
 const NUMERIC_DATE = /\b(\d{1,2})[/.](\d{1,2})[/.](\d{2,4})\b/g;
 
 function monthIndex(name: string): number {
-  return MONTHS.indexOf(name.slice(0, 3).toLowerCase()) + 1;
+  return MONTH_PATTERNS.findIndex((re) => re.test(name)) + 1;
 }
 
 function dayKey(month: number, day: number): string | null {
@@ -226,7 +256,17 @@ export function runDraftChecks(input: {
       : "";
 
   // Figures that don't appear anywhere in the sources.
-  const sourceFigureKeys = new Set(extractFigures(input.sourceText).map((f) => f.key));
+  const sourceFigureKeys = new Set<string>();
+  for (const figure of extractFigures(input.sourceText)) {
+    sourceFigureKeys.add(figure.key);
+    // A bare "203.3" in a table headed "USD million" (or "thousand")
+    // should also match a draft that writes it out as 203,300,000.
+    if (figure.bare) {
+      const value = Number(figure.key) / 100;
+      sourceFigureKeys.add(`${Math.round(value * 1e3 * 100)}`);
+      sourceFigureKeys.add(`${Math.round(value * 1e6 * 100)}`);
+    }
+  }
   const flaggedFigures = new Set<string>();
   for (const { section, text } of texts) {
     for (const figure of extractFigures(text)) {
@@ -331,11 +371,15 @@ export function extractSurveyRatings(
         .filter(Boolean);
       const answerLower = answer.toLowerCase();
       // The option mentioned earliest in the answer wins; on a tie, the
-      // longer one ("Somewhat Ineffective" over "Ineffective").
+      // longer one ("Somewhat Ineffective" over "Ineffective"). A negated
+      // mention ("not very effective") is skipped -- it means the
+      // opposite, and a missing rating is better than an inverted one.
       let best: { option: string; index: number } | null = null;
       for (const option of options) {
         const index = answerLower.indexOf(option.toLowerCase());
         if (index === -1) continue;
+        const before = answerLower.slice(Math.max(0, index - 25), index);
+        if (/(\bnot|\bnever|\bno|n't)\s+(\w+\s+)?$/.test(before)) continue;
         if (
           !best ||
           index < best.index ||

@@ -244,6 +244,105 @@ REVIEWER FLAGS
 FINAL CHECK
 - Before answering, re-read every number and date in your draft and confirm it appears in a source. Remove any that don't, or keep them and add an "unsupported" flag.`;
 
+// Spotting disagreements between sources is the one thing the drafting
+// request did unreliably (in testing it caught a planted date conflict in
+// only 2 of 3 runs) -- it's one instruction among many there. This is a
+// separate request whose only job is that comparison.
+const REPORT_SECTIONS = [
+  "Executive Summary",
+  "1.1 Country situation",
+  "3.1 Contextual factors",
+  "3.2 Timeline",
+  "3.3 In-country structure",
+  "3.4 Corporate response mechanisms",
+  "3.5 Deployment of experts",
+  "3.6 Programmatic response",
+  "3.7 Operational response",
+  "3.8 Coordination",
+  "3.9 Communication and resource mobilization",
+  "Gender",
+] as const;
+
+const CONFLICT_CHECK_PROMPT =`You are checking the source material for an After Action Review (AAR) before a report is drafted from it. Your only task is to find places where two or more sources DISAGREE about the same thing. Do not summarize the sources and do not draft anything.
+
+Each source is introduced by a line of the form "--- Source: <label> ---". Compare every source against every other source, and look in particular for:
+- Different dates for the same event or decision (e.g. one document says something was approved on 12 March, another says 14 March).
+- Different amounts, counts, durations or percentages for the same thing.
+- Different explanations of the same outcome, especially who or what caused a delay or problem (e.g. one respondent blames the Country Office, another blames HQ). Compare survey respondents against each other carefully: respondents from different units (Country Office, Crisis Bureau, SURGE advisers, HQ) often explain the same delay differently, and each blames someone else. That counts as a disagreement even if both accounts could be partly true.
+- Opposite assessments of the same thing (e.g. one respondent calls a mechanism effective, another calls it ineffective).
+
+For each disagreement, say what each source says, quoting or closely paraphrasing it, and name the sources using their labels exactly. Write it as a note to the human reviewer, ending with "Resolve before the final draft." Also give the report section it most affects.
+
+Do NOT report:
+- Sources that simply give different levels of detail, or where one source mentions something another doesn't.
+- Differences in wording that mean the same thing.
+
+If there are no disagreements, return an empty list.`;
+
+const conflictSchema = {
+  type: Type.OBJECT,
+  properties: {
+    conflicts: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          section: {
+            type: Type.STRING,
+            enum: [...REPORT_SECTIONS],
+            description: "The report section most affected",
+          },
+          description: { type: Type.STRING },
+          sources: SOURCES_FIELD,
+        },
+        required: ["section", "description", "sources"],
+      },
+    },
+  },
+  required: ["conflicts"],
+};
+
+// Two conflict flags are the same issue when they cite at least two of
+// the same sources -- used to drop the draft's copy of a conflict the
+// dedicated check also found.
+function sameConflict(a: { sources: string[] }, b: { sources: string[] }): boolean {
+  return a.sources.filter((s) => b.sources.includes(s)).length >= 2;
+}
+
+// Returns null (not an empty list) when the check itself fails, so the
+// caller can tell "no conflicts found" apart from "didn't get to look".
+async function findSourceConflicts(
+  ai: GoogleGenAI,
+  model: string,
+  contents: { role: string; parts: object[] }[],
+): Promise<Omit<ReviewerFlag, "id" | "resolved">[] | null> {
+  try {
+    const response = await ai.models.generateContent({
+      model,
+      contents,
+      config: {
+        systemInstruction: CONFLICT_CHECK_PROMPT,
+        responseMimeType: "application/json",
+        responseSchema: conflictSchema,
+      },
+    });
+    if (!response.text) return null;
+    const { conflicts } = JSON.parse(response.text) as {
+      conflicts: { section: string; description: string; sources: string[] }[];
+    };
+    return (conflicts ?? []).map((c) => ({
+      type: "conflict" as const,
+      section: c.section,
+      description: c.description,
+      sources: c.sources ?? [],
+      origin: "ai" as const,
+    }));
+  } catch (err) {
+    console.error("generateDraft: source conflict check failed", err);
+    return null;
+  }
+}
+
 export async function generateDraft(input: {
   overview: {
     country: string;
@@ -365,21 +464,28 @@ export async function generateDraft(input: {
     .filter(Boolean)
     .join("\n\n");
 
+  const contents = [
+    {
+      role: "user",
+      parts: [{ text: contextText }, ...fileParts],
+    },
+  ];
+
   try {
-    const response = await ai.models.generateContent({
-      model,
-      contents: [
-        {
-          role: "user",
-          parts: [{ text: contextText }, ...fileParts],
+    // The conflict check runs alongside the draft rather than after it (it
+    // only needs the sources, not the draft), so it adds cost but not wait.
+    const [response, sourceConflicts] = await Promise.all([
+      ai.models.generateContent({
+        model,
+        contents,
+        config: {
+          systemInstruction: `${input.prompt}\n\n${DRAFTING_RULES}`,
+          responseMimeType: "application/json",
+          responseSchema,
         },
-      ],
-      config: {
-        systemInstruction: `${input.prompt}\n\n${DRAFTING_RULES}`,
-        responseMimeType: "application/json",
-        responseSchema,
-      },
-    });
+      }),
+      findSourceConflicts(ai, model, contents),
+    ]);
 
     const text = response.text;
     if (!text) {
@@ -402,8 +508,18 @@ export async function generateDraft(input: {
       ].join("\n\n"),
       unsearchedSources: unsearchablePdfs,
     });
+    // Neither the dedicated conflict check nor the draft's own conflict
+    // flags catch everything (in testing each missed a planted conflict
+    // the other found), so both are kept, minus the draft's copies of
+    // conflicts the check already reported.
+    const draftFlags = (aiFlags ?? []).filter(
+      (flag) =>
+        flag.type !== "conflict" ||
+        !(sourceConflicts ?? []).some((c) => sameConflict(c, flag)),
+    );
     const reviewerFlags: ReviewerFlag[] = [
-      ...(aiFlags ?? []).map((flag) => ({ ...flag, origin: "ai" as const })),
+      ...(sourceConflicts ?? []),
+      ...draftFlags.map((flag) => ({ ...flag, origin: "ai" as const })),
       ...checkFlags,
     ].map((flag) => ({ ...flag, id: crypto.randomUUID(), resolved: false }));
 
