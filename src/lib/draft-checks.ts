@@ -137,8 +137,9 @@ const MONTH_NAME = `(${MONTH_PATTERNS.map((re) => re.source.slice(4, -2)).join("
 // Also catches lists and ranges sharing one month: "8 and 15 March",
 // "2 to 4 March", "3, 9 and 12 May", "8 y 15 de marzo", "1er mars".
 const DAY = "\\d{1,2}(?:st|nd|rd|th|er)?";
+// The lookbehind keeps "SitRep No. 2 and 21 May" from reading as 2 May.
 const DAY_MONTH = new RegExp(
-  `\\b(${DAY}(?:\\s*(?:,|and|y|et|&|to|al|au|-|–)\\s*${DAY})*)\\s+(?:(?:of|de|du)\\s+)?${MONTH_NAME}\\b`,
+  `(?<!\\b(?:no|nos|number|n°|#)\\.?\\s*)\\b(${DAY}(?:\\s*(?:,|and|y|et|&|to|al|au|-|–)\\s*${DAY})*)\\s+(?:(?:of|de|du)\\s+)?${MONTH_NAME}\\b`,
   "gi",
 );
 const MONTH_DAY = new RegExp(`\\b${MONTH_NAME}\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, "gi");
@@ -378,8 +379,11 @@ export function extractSurveyRatings(
       for (const option of options) {
         const index = answerLower.indexOf(option.toLowerCase());
         if (index === -1) continue;
+        // English, Spanish and French negations ("not", "no diría", "pas").
         const before = answerLower.slice(Math.max(0, index - 25), index);
-        if (/(\bnot|\bnever|\bno|n't)\s+(\w+\s+)?$/.test(before)) continue;
+        if (/(?<![\p{L}])(not|never|no|nunca|ni|pas|jamais)\s+([\p{L}']+\s+)?$|n't\s+([\p{L}']+\s+)?$/u.test(before)) {
+          continue;
+        }
         if (
           !best ||
           index < best.index ||

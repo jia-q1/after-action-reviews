@@ -228,6 +228,8 @@ NEUTRAL LANGUAGE
   - Source: SURGE adviser said the remote period "did not work well" because colleagues couldn't reach them. Not: "severely diminished field responsiveness". Instead: "The adviser reported that the switch to remote support reduced their availability to field colleagues."
 
 COVERAGE
+- Some invited respondents may not have answered (listed under "Invited but did not respond"). Say so in the data collection section, and don't present the views of those who did answer as the full picture for areas the missing respondents would have covered.
+- Leave out points that aren't about the crisis response itself (e.g. general office complaints like old equipment or parking), even if a respondent raised them. If you're unsure whether something is relevant, leave it out of the report and add an "omitted" reviewer flag instead.
 - Gender is its own response area: put gender findings in their own findings matrix row(s) with responseArea "Gender", including any gender-based violence or protection risks respondents raised and whether they were followed up.
 - Where a respondent chose a rating on a scale (e.g. "Limited Integrated", "Somewhat Ineffective"), report that rating in the relevant section, attributed.
 - Every findings matrix row needs an "owner": whoever is best placed to act on the recommendation. Where respondents named who should act, use that.
@@ -301,6 +303,28 @@ const conflictSchema = {
   },
   required: ["conflicts"],
 };
+
+function surveyLabel(invite: SurveyInvite, role: string): string {
+  return `Survey: ${invite.name}, ${role} (unit: ${invite.unit || "not given"})`;
+}
+
+// Maps a source the model cited back to the exact label it was given:
+// exact match first, then ignoring the "Document:"/"Survey:" prefix and
+// case, then by containment either way (a trimmed or truncated label).
+// Anything unrecognizable is kept as written.
+function canonicalSource(cited: string, labels: string[]): string {
+  if (labels.includes(cited)) return cited;
+  const norm = (s: string) =>
+    s.replace(/^\s*(document|survey)\s*:\s*/i, "").trim().toLowerCase();
+  const c = norm(cited);
+  if (!c) return cited;
+  return (
+    labels.find((l) => norm(l) === c) ??
+    labels.find((l) => norm(l).startsWith(c) || c.startsWith(norm(l))) ??
+    labels.find((l) => norm(l).includes(c)) ??
+    cited
+  );
+}
 
 // Two conflict flags are the same issue when they cite at least two of
 // the same sources -- used to drop the draft's copy of a conflict the
@@ -442,10 +466,28 @@ export async function generateDraft(input: {
     const role = invite.role || template?.name || invite.unit || "role not given";
     return { invite, role, questions };
   });
+  // Who was invited but never answered -- named in the prompt so the model
+  // can say whose perspective is missing, and flagged for the reviewer.
+  const nonResponders = input.invites
+    .filter((i) => !(i.status === "Responded" && i.answers))
+    .map((invite) => {
+      const template = input.templates.find((t) => t.id === invite.templateId);
+      return `${invite.role || template?.name || "role not given"} (${template?.name ?? (invite.unit || "unit not given")})`;
+    });
   const surveySections = surveyResponses.map(({ invite, role, questions }) => {
     const qa = questions.map((q) => `Q: ${q.text}\nA: ${q.answer}`).join("\n\n");
-    return `--- Source: Survey: ${invite.name}, ${role} (unit: ${invite.unit || "not given"}) ---\n${qa}`;
+    return `--- Source: ${surveyLabel(invite, role)} ---\n${qa}`;
   });
+
+  // Every label the model was given, for mapping its citations back to
+  // them (it sometimes drops the "Document: " prefix or trims a label).
+  const sourceLabels = [
+    ...input.documents.map((doc) => `Document: ${doc.name}`),
+    ...surveyResponses.map(({ invite, role }) => surveyLabel(invite, role)),
+    "Reviewer notes",
+  ];
+  const canonical = (sources: string[] | undefined) =>
+    (sources ?? []).map((s) => canonicalSource(s, sourceLabels));
 
   const notes = input.notes.trim();
   const contextText = [
@@ -460,6 +502,9 @@ export async function generateDraft(input: {
     surveySections.length > 0
       ? `Survey responses collected:\n\n${surveySections.join("\n\n")}`
       : "No survey responses have been collected yet.",
+    nonResponders.length > 0
+      ? `Invited but did not respond (${nonResponders.length} of ${input.invites.length}): ${nonResponders.join("; ")}.`
+      : "",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -474,7 +519,7 @@ export async function generateDraft(input: {
   try {
     // The conflict check runs alongside the draft rather than after it (it
     // only needs the sources, not the draft), so it adds cost but not wait.
-    const [response, sourceConflicts] = await Promise.all([
+    const [response, rawSourceConflicts] = await Promise.all([
       ai.models.generateContent({
         model,
         contents,
@@ -492,9 +537,14 @@ export async function generateDraft(input: {
       return { ok: false, error: "Gemini returned an empty response." };
     }
 
-    const { reviewerFlags: aiFlags, ...parsed } = JSON.parse(text) as ModelOutput;
-    const timeline = parsed.timeline ?? [];
-    const findingsMatrix = parsed.findingsMatrix ?? [];
+    const { reviewerFlags: rawAiFlags, ...parsed } = JSON.parse(text) as ModelOutput;
+    const timeline = (parsed.timeline ?? []).map((e) => ({ ...e, sources: canonical(e.sources) }));
+    const findingsMatrix = (parsed.findingsMatrix ?? []).map((r) => ({
+      ...r,
+      sources: canonical(r.sources),
+    }));
+    const aiFlags = (rawAiFlags ?? []).map((f) => ({ ...f, sources: canonical(f.sources) }));
+    const sourceConflicts = rawSourceConflicts?.map((f) => ({ ...f, sources: canonical(f.sources) })) ?? null;
 
     const checkFlags = runDraftChecks({
       draft: parsed,
@@ -512,12 +562,25 @@ export async function generateDraft(input: {
     // flags catch everything (in testing each missed a planted conflict
     // the other found), so both are kept, minus the draft's copies of
     // conflicts the check already reported.
-    const draftFlags = (aiFlags ?? []).filter(
+    const draftFlags = aiFlags.filter(
       (flag) =>
         flag.type !== "conflict" ||
         !(sourceConflicts ?? []).some((c) => sameConflict(c, flag)),
     );
+    const missingResponses =
+      nonResponders.length > 0
+        ? [
+            {
+              type: "thin-evidence" as const,
+              section: "2.2-2.4 Data collection",
+              description: `${nonResponders.length} of ${input.invites.length} invited respondents didn't respond: ${nonResponders.join("; ")}. Their perspectives are missing from this draft, so sections that depend on them may be one-sided. Consider following up before the final draft.`,
+              sources: [],
+              origin: "check" as const,
+            },
+          ]
+        : [];
     const reviewerFlags: ReviewerFlag[] = [
+      ...missingResponses,
       ...(sourceConflicts ?? []),
       ...draftFlags.map((flag) => ({ ...flag, origin: "ai" as const })),
       ...checkFlags,
