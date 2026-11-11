@@ -8,15 +8,12 @@ const navLinks = [
   { href: "/workspace", label: "AAR Workspace" },
 ];
 
-// Shown on the internal-tool pages -- clicking it when not actually logged
-// in is harmless (it just clears a cookie that isn't set), this is just a
-// heuristic for when the affordance is relevant, not an auth check.
-function isInternalPath(pathname: string): boolean {
-  return (
-    pathname.startsWith("/workspace") ||
-    pathname.startsWith("/new") ||
-    /^\/reviews\/[^/]+\/edit/.test(pathname)
-  );
+// Every page needs the access code now (the Review Library included), so
+// Log out shows everywhere except the login page and the survey pages
+// external invitees use without logging in. Not an auth check: clicking it
+// when not logged in just clears a cookie that isn't set.
+function showsLogout(pathname: string): boolean {
+  return !pathname.startsWith("/login") && !pathname.startsWith("/respond");
 }
 
 export default function SiteHeader() {
@@ -71,7 +68,7 @@ export default function SiteHeader() {
                   </Link>
                 );
               })}
-              {isInternalPath(pathname) && (
+              {showsLogout(pathname) && (
                 <button
                   type="button"
                   onClick={handleLogout}
