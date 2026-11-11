@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
+import { usePathname } from "next/navigation";
 
 const navLinks = [
   { href: "/", label: "Review Library" },
@@ -21,12 +21,12 @@ function isInternalPath(pathname: string): boolean {
 
 export default function SiteHeader() {
   const pathname = usePathname();
-  const router = useRouter();
 
   async function handleLogout() {
-    await fetch("/api/logout", { method: "POST" });
-    router.push("/");
-    router.refresh();
+    await fetch("/api/logout", { method: "POST" }).catch(() => {});
+    // Full page load: "/" needs the access code too now, and a client-side
+    // push could show the cached library from before logging out.
+    window.location.assign("/login");
   }
 
   return (

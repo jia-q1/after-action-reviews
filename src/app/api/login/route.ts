@@ -5,7 +5,8 @@ import { createSessionToken, isValidAccessCode, SESSION_COOKIE } from "@/lib/aut
 export async function POST(request: Request) {
   const { code } = (await request.json().catch(() => ({}))) as { code?: string };
 
-  if (!isValidAccessCode(code ?? "")) {
+  // Trimmed: pasting or autofilling the code often adds a trailing space.
+  if (!isValidAccessCode(typeof code === "string" ? code.trim() : "")) {
     return NextResponse.json({ error: "Incorrect access code." }, { status: 401 });
   }
 

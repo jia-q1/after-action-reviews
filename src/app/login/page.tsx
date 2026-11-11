@@ -1,12 +1,20 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
+
+// Only same-site paths: "//evil.example" or "javascript:..." in ?next=
+// would otherwise send someone off-site (or run script) after logging in.
+function safeNext(value: string | null): string {
+  if (!value || !value.startsWith("/") || value.startsWith("//") || value.startsWith("/\\")) {
+    return "/workspace";
+  }
+  return value;
+}
 
 function LoginForm() {
-  const router = useRouter();
   const searchParams = useSearchParams();
-  const next = searchParams.get("next") || "/workspace";
+  const next = safeNext(searchParams.get("next"));
 
   const [code, setCode] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -16,18 +24,30 @@ function LoginForm() {
     e.preventDefault();
     setSubmitting(true);
     setError(null);
-    const res = await fetch("/api/login", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ code }),
-    });
-    if (res.ok) {
-      router.push(next);
-      router.refresh();
-    } else {
-      setError("Incorrect access code.");
-      setSubmitting(false);
+    try {
+      const res = await fetch("/api/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code: code.trim() }),
+      });
+      if (res.ok) {
+        // A full page load, not router.push + router.refresh: the client
+        // router may still hold pages it fetched while logged out (cached
+        // redirects back to /login), and push followed by refresh rendered
+        // the destination twice. replace() also keeps the login page out
+        // of the back-button history.
+        window.location.replace(next);
+        return;
+      }
+      setError(
+        res.status === 401
+          ? "Incorrect access code."
+          : "Something went wrong on the server. Please try again.",
+      );
+    } catch {
+      setError("Couldn't reach the server. Check your connection and try again.");
     }
+    setSubmitting(false);
   }
 
   return (
@@ -47,6 +67,8 @@ function LoginForm() {
         <form onSubmit={handleSubmit} className="mt-6 space-y-3">
           <input
             type="password"
+            name="password"
+            autoComplete="current-password"
             value={code}
             onChange={(e) => setCode(e.target.value)}
             placeholder="Access code"

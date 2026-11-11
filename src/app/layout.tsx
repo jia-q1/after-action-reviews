@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Noto_Sans, Noto_Serif } from "next/font/google";
 import SiteHeader from "@/components/site-header";
 import SiteFooter from "@/components/site-footer";
+import SessionWatcher from "@/components/session-watcher";
 import "./globals.css";
 
 const notoSans = Noto_Sans({
@@ -34,6 +35,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-background text-un-ink">
         <SiteHeader />
+        <SessionWatcher />
         <div className="flex-1 flex flex-col">{children}</div>
         <SiteFooter />
       </body>
