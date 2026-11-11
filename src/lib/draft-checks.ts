@@ -88,6 +88,9 @@ type Figure = {
   checkable: boolean;
   // No currency, unit or percent sign -- e.g. a number in a table cell.
   bare: boolean;
+  // For space-grouped numbers, the last group on its own: "Phase 2 100
+  // families" is read as 2,100, but may just be 100.
+  altKey: string | null;
 };
 
 // Normalizes "USD 6.8M", "6.8 million" and "6,800,000" to the same key so
@@ -109,7 +112,12 @@ function extractFigures(text: string): Figure[] {
       !isYear && (Boolean(currency) || Boolean(suffix) || isPercent || value >= 100);
     const baseKey = suffix ? `${Math.round(base * 100)}` : null;
     const bare = !currency && !suffix && !isPercent;
-    figures.push({ raw: raw.trim(), key, baseKey, checkable, bare });
+    const altKey = /[^\d.,]/.test(digits)
+      ? `${isPercent ? "%" : ""}${Math.round(
+          Number(digits.split(/[^\d.,]/).pop()) * (suffix ? multiplier(suffix) : 1) * 100,
+        )}`
+      : null;
+    figures.push({ raw: raw.trim(), key, baseKey, checkable, bare, altKey });
   }
   return figures;
 }
@@ -139,7 +147,7 @@ const MONTH_NAME = `(${MONTH_PATTERNS.map((re) => re.source.slice(4, -2)).join("
 const DAY = "\\d{1,2}(?:st|nd|rd|th|er)?";
 // The lookbehind keeps "SitRep No. 2 and 21 May" from reading as 2 May.
 const DAY_MONTH = new RegExp(
-  `(?<!\\b(?:no|nos|number|n°|#)\\.?\\s*)\\b(${DAY}(?:\\s*(?:,|and|y|et|&|to|al|au|-|–)\\s*${DAY})*)\\s+(?:(?:of|de|du)\\s+)?${MONTH_NAME}\\b`,
+  `(?<!(?:\\b(?:no|nos|number|n°)|#)\\.?\\s*)\\b(${DAY}(?:\\s*(?:,|and|y|et|&|to|al|au|-|–)\\s*${DAY})*)\\s+(?:(?:of|de|du)\\s+)?${MONTH_NAME}\\b`,
   "gi",
 );
 const MONTH_DAY = new RegExp(`\\b${MONTH_NAME}\\s+(\\d{1,2})(?:st|nd|rd|th)?\\b`, "gi");
@@ -160,10 +168,16 @@ function dayKey(month: number, day: number): string | null {
 function extractDayKeys(text: string, { ambiguousNumeric }: { ambiguousNumeric: boolean }) {
   const keys = new Set<string>();
   const add = (key: string | null) => key && keys.add(key);
+  // Lowercase "may" is the verb ("4 may have left"), not the month --
+  // English capitalizes month names.
+  const isMonth = (name: string) => name !== "may";
   for (const m of text.matchAll(DAY_MONTH)) {
+    if (!isMonth(m[2])) continue;
     for (const day of m[1].match(/\d{1,2}/g) ?? []) add(dayKey(monthIndex(m[2]), Number(day)));
   }
-  for (const m of text.matchAll(MONTH_DAY)) add(dayKey(monthIndex(m[1]), Number(m[2])));
+  for (const m of text.matchAll(MONTH_DAY)) {
+    if (isMonth(m[1])) add(dayKey(monthIndex(m[1]), Number(m[2])));
+  }
   for (const m of text.matchAll(ISO_DATE)) add(dayKey(Number(m[2]), Number(m[3])));
   if (ambiguousNumeric) {
     // 03/12 could be either order depending on who wrote it -- accept both
@@ -274,7 +288,8 @@ export function runDraftChecks(input: {
       if (
         !figure.checkable ||
         sourceFigureKeys.has(figure.key) ||
-        (figure.baseKey && sourceFigureKeys.has(figure.baseKey))
+        (figure.baseKey && sourceFigureKeys.has(figure.baseKey)) ||
+        (figure.altKey && sourceFigureKeys.has(figure.altKey))
       ) {
         continue;
       }

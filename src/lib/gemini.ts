@@ -468,11 +468,13 @@ export async function generateDraft(input: {
   });
   // Who was invited but never answered -- named in the prompt so the model
   // can say whose perspective is missing, and flagged for the reviewer.
-  const nonResponders = input.invites
+  // Draft invites were never sent, so they don't count as invited.
+  const sentInvites = input.invites.filter((i) => i.status !== "Draft");
+  const nonResponders = sentInvites
     .filter((i) => !(i.status === "Responded" && i.answers))
     .map((invite) => {
       const template = input.templates.find((t) => t.id === invite.templateId);
-      return `${invite.role || template?.name || "role not given"} (${template?.name ?? (invite.unit || "unit not given")})`;
+      return `${invite.role || template?.name || "role not given"} (unit: ${invite.unit || "not given"})`;
     });
   const surveySections = surveyResponses.map(({ invite, role, questions }) => {
     const qa = questions.map((q) => `Q: ${q.text}\nA: ${q.answer}`).join("\n\n");
@@ -490,8 +492,9 @@ export async function generateDraft(input: {
     (sources ?? []).map((s) => canonicalSource(s, sourceLabels));
 
   const notes = input.notes.trim();
+  const overviewText = `AAR overview: country=${input.overview.country || "unspecified"}; crisis=${input.overview.crisisName || "unspecified"}; type=${input.overview.crisisType}; period=${input.overview.periodStart} to ${input.overview.periodEnd}; office=${input.overview.office || "unspecified"}.`;
   const contextText = [
-    `AAR overview: country=${input.overview.country || "unspecified"}; crisis=${input.overview.crisisName || "unspecified"}; type=${input.overview.crisisType}; period=${input.overview.periodStart} to ${input.overview.periodEnd}; office=${input.overview.office || "unspecified"}.`,
+    overviewText,
     notes ? `--- Source: Reviewer notes ---\n${notes}` : "",
     unreadableDocuments.length > 0
       ? `Note: the following attached documents could not be read by you (unsupported format or stored externally) -- do not fabricate their content, just be aware they exist and may need manual review: ${unreadableDocuments.join(", ")}.`
@@ -503,7 +506,7 @@ export async function generateDraft(input: {
       ? `Survey responses collected:\n\n${surveySections.join("\n\n")}`
       : "No survey responses have been collected yet.",
     nonResponders.length > 0
-      ? `Invited but did not respond (${nonResponders.length} of ${input.invites.length}): ${nonResponders.join("; ")}.`
+      ? `Invited but did not respond (${nonResponders.length} of ${sentInvites.length}):${nonResponders.join("; ")}.`
       : "",
   ]
     .filter(Boolean)
@@ -550,7 +553,11 @@ export async function generateDraft(input: {
       draft: parsed,
       timeline,
       findingsMatrix,
+      // The overview carries the review period, which the scope section
+      // nearly always restates -- without it every draft got flagged for
+      // its own start and end dates.
       sourceText: [
+        overviewText,
         notes,
         ...extractedTextBlocks,
         ...pdfTexts,
@@ -573,7 +580,7 @@ export async function generateDraft(input: {
             {
               type: "thin-evidence" as const,
               section: "2.2-2.4 Data collection",
-              description: `${nonResponders.length} of ${input.invites.length} invited respondents didn't respond: ${nonResponders.join("; ")}. Their perspectives are missing from this draft, so sections that depend on them may be one-sided. Consider following up before the final draft.`,
+              description: `${nonResponders.length} of ${sentInvites.length} invited respondents didn't respond: ${nonResponders.join("; ")}. Their perspectives are missing from this draft, so sections that depend on them may be one-sided. Consider following up before the final draft.`,
               sources: [],
               origin: "check" as const,
             },
