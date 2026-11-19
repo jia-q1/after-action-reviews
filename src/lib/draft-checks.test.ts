@@ -122,6 +122,34 @@ describe("dates", () => {
   });
 });
 
+describe("sources the check can't search", () => {
+  const run = (unsearchedSources: string[]) =>
+    runDraftChecks({
+      draft: {
+        ...EMPTY_DRAFT,
+        executiveSummary: "USD 250,000 was approved on 11 May for 3,400 houses.",
+        operationalResponse: "The CRP was due 15 June.",
+      },
+      timeline: [],
+      findingsMatrix: [],
+      sourceText: "",
+      unsearchedSources,
+    });
+
+  it("groups unverified figures and dates into one flag when a scan couldn't be searched", () => {
+    const flags = run(["SCANNED_minutes.pdf"]);
+    assert.equal(flags.length, 1);
+    assert.equal(flags[0].section, "Whole draft");
+    assert.match(flags[0].description, /^4 figures and dates/);
+    assert.match(flags[0].description, /USD 250,000/);
+    assert.match(flags[0].description, /SCANNED_minutes\.pdf/);
+  });
+
+  it("flags each one separately when every source was searched", () => {
+    assert.equal(run([]).length, 4);
+  });
+});
+
 describe("wording", () => {
   it("flags loaded words the sources don't use", () => {
     const flags = check({ operationalResponse: "Staff suffered severe burnout." }, "Staff worked 12-hour days.");
@@ -130,6 +158,11 @@ describe("wording", () => {
 
   it("allows a loaded word when the source uses the same phrase", () => {
     assert.deepEqual(check({ countrySituation: "The country faced severe flooding." }, "Severe flooding hit the north."), []);
+  });
+
+  it("allows a different form of the neighbouring word", () => {
+    assert.deepEqual(check({ countrySituation: "Severe flooding displaced thousands." }, "The severe floods of August."), []);
+    assert.deepEqual(check({ countrySituation: "The floods were severe." }, "Floods were severe in the north."), []);
   });
 
   it("doesn't let one source phrase excuse the word everywhere", () => {

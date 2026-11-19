@@ -218,15 +218,21 @@ const LOADED_TERMS = new RegExp(
 // ("severe flooding" straight from a sitrep). Checked as a two-word phrase
 // with the word on either side, not the word alone -- otherwise one
 // "severe flooding" in a sitrep would excuse "severe burnout" everywhere.
+// The neighbouring word only has to share its stem, so "severe flooding"
+// in a draft matches "severe floods" in the source.
 function usedInSource(text: string, index: number, word: string, source: string): boolean {
   const before = /(\S+)\s+$/.exec(text.slice(0, index))?.[1] ?? "";
   const after = /^\s+(\S+)/.exec(text.slice(index + word.length))?.[1] ?? "";
   const clean = (w: string) => w.toLowerCase().replace(/[^\p{L}\p{N}-]/gu, "");
-  const w = clean(word);
-  return [
-    before && `${clean(before)} ${w}`,
-    after && `${w} ${clean(after)}`,
-  ].some((phrase) => phrase && source.includes(phrase));
+  const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  // "flooding" -> "flood", "floods" -> "flood"; short words are kept whole.
+  const stem = (w: string) => escape(w.length > 5 ? w.slice(0, Math.max(5, w.length - 3)) : w);
+  const w = escape(clean(word));
+  const patterns = [
+    clean(before) && `(?:^|[^\\p{L}\\p{N}])${stem(clean(before))}[\\p{L}\\p{N}-]* ${w}(?![\\p{L}\\p{N}])`,
+    clean(after) && `(?:^|[^\\p{L}\\p{N}])${w} ${stem(clean(after))}`,
+  ];
+  return patterns.some((p) => p && new RegExp(p, "u").test(source));
 }
 
 // "violating the 48-hour mandate" turns a target into a rule; "mandate
@@ -265,10 +271,11 @@ export function runDraftChecks(input: {
     .toLowerCase()
     .replace(/[^\p{L}\p{N}\s-]/gu, "")
     .replace(/\s+/g, " ");
-  const caveat =
-    input.unsearchedSources.length > 0
-      ? ` This check can't search ${input.unsearchedSources.join(", ")}, so it may come from there.`
-      : "";
+  // Figures and dates not found in the sources. Collected rather than
+  // pushed straight away: when a source can't be searched (a scanned PDF),
+  // most of these may come from it, and one flag per figure flooded the
+  // reviewer panel (20 false flags from a single scan in testing).
+  const unverified: { what: string; flag: FlagInput }[] = [];
 
   // Figures that don't appear anywhere in the sources.
   const sourceFigureKeys = new Set<string>();
@@ -296,12 +303,15 @@ export function runDraftChecks(input: {
       const dedupeKey = `${section}|${figure.key}`;
       if (flaggedFigures.has(dedupeKey)) continue;
       flaggedFigures.add(dedupeKey);
-      flags.push({
-        type: "unsupported",
-        section,
-        description: `"${figure.raw}" doesn't appear in any source. It may have been calculated from other figures, or invented. Check it before the final draft.${caveat}`,
-        sources: [],
-        origin: "check",
+      unverified.push({
+        what: `"${figure.raw}" (${section})`,
+        flag: {
+          type: "unsupported",
+          section,
+          description: `"${figure.raw}" doesn't appear in any source. It may have been calculated from other figures, or invented. Check it before the final draft.`,
+          sources: [],
+          origin: "check",
+        },
       });
     }
   }
@@ -313,12 +323,15 @@ export function runDraftChecks(input: {
   const checkDay = (section: string, key: string, label: string) => {
     if (sourceDays.has(key) || flaggedDays.has(`${section}|${key}`)) return;
     flaggedDays.add(`${section}|${key}`);
-    flags.push({
-      type: "unsupported",
-      section,
-      description: `The date ${label} doesn't appear in any source. Check it before the final draft.${caveat}`,
-      sources: [],
-      origin: "check",
+    unverified.push({
+      what: `${label} (${section})`,
+      flag: {
+        type: "unsupported",
+        section,
+        description: `The date ${label} doesn't appear in any source. Check it before the final draft.`,
+        sources: [],
+        origin: "check",
+      },
     });
   };
   for (const entry of input.timeline) {
@@ -333,6 +346,26 @@ export function runDraftChecks(input: {
       const label = `${day} ${new Date(2000, month - 1, 1).toLocaleString("en", { month: "long" })}`;
       checkDay(section, key, label);
     }
+  }
+
+  if (input.unsearchedSources.length === 0 || unverified.length <= 1) {
+    const caveat =
+      input.unsearchedSources.length > 0
+        ? ` This check can't search ${input.unsearchedSources.join(", ")}, so it may come from there.`
+        : "";
+    flags.push(
+      ...unverified.map(({ flag }) => ({ ...flag, description: flag.description + caveat })),
+    );
+  } else {
+    const shown = unverified.slice(0, 15).map((u) => u.what);
+    const more = unverified.length - shown.length;
+    flags.push({
+      type: "unsupported",
+      section: "Whole draft",
+      description: `${unverified.length} figures and dates weren't found in the sources this check can read: ${shown.join("; ")}${more > 0 ? `; and ${more} more` : ""}. This check can't search ${input.unsearchedSources.join(", ")} (scanned or image-only), so most may come from there. Check them against ${input.unsearchedSources.length === 1 ? "that document" : "those documents"} before the final draft.`,
+      sources: [],
+      origin: "check",
+    });
   }
 
   // Judgmental wording the sources don't use.

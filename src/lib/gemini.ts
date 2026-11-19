@@ -211,6 +211,7 @@ const DRAFTING_RULES = `Rules that always apply to this draft, in addition to th
 
 SOURCES
 - Each source is introduced by a line of the form "--- Source: <label> ---". Use those labels exactly, and only those labels, in every "sources" field.
+- The labels are for the "sources" fields only. Never put a label, a file name or a personal name in the report text. Refer to documents by a short description (e.g. "the Crisis Board minutes of 2 July", "the SURGE deployment tracker") and to respondents by role or unit (e.g. "the Operations Manager", "a Crisis Bureau respondent"), so no one is identified by name.
 - Every timeline entry and every findings matrix row must list the sources that support it.
 - Only state a figure, amount, percentage, count or date if it appears in a source. Do not round, convert, combine or estimate figures into new ones. If you're unsure of a figure, leave it out and add a reviewer flag.
 
@@ -429,8 +430,10 @@ export async function generateDraft(input: {
             uploadAndWaitForActive(ai, { mimeType, buffer, displayName: doc.name }),
             extractPdfText(buffer).catch(() => ""),
           ]);
+          // Just the label: anything else in this header (it used to say
+          // "(attached PDF follows)") gets copied into the draft text.
           fileParts.push(
-            { text: `--- Source: Document: ${doc.name} (attached PDF follows) ---` },
+            { text: `--- Source: Document: ${doc.name} ---` },
             { fileData: uploaded },
           );
           if (pdfText) pdfTexts.push(pdfText);
