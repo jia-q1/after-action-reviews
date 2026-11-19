@@ -13,6 +13,7 @@ import { sql } from "@vercel/postgres";
 import {
   reviews as seedReviews,
   surveyTemplates as seedSurveyTemplates,
+  type DraftBasis,
   type Review,
   type ResponseArea,
   type ReviewerFlag,
@@ -35,6 +36,7 @@ export type AarRecord = Review & {
   notes: string;
   prompt: string;
   reviewerFlags?: ReviewerFlag[];
+  draftBasis?: DraftBasis;
   updatedAt: string;
 };
 

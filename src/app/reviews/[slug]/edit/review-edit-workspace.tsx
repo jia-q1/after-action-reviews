@@ -11,6 +11,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import {
   dataCollectionMethods,
+  type DraftBasis,
   type FindingRow,
   type Interviewee,
   type ReviewerFlag,
@@ -33,6 +34,8 @@ import {
   ArtifactField,
   Bibliography,
   DocIcon,
+  DraftFreshnessNotice,
+  GENERATION_TIMEOUT_MESSAGE,
   GenerateConfirmBanner,
   GeneratingBanner,
   IntervieweeField,
@@ -77,6 +80,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
   const [record, setRecord] = useState<AarRecord | null>(null);
 
   const [documents, setDocuments] = useState<DocumentSource[]>([]);
+  const [draftBasis, setDraftBasis] = useState<DraftBasis | null>(null);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
   const [draft, setDraft] = useState<Draft>(EMPTY_DRAFT);
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
@@ -146,6 +150,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
       setInterviewees(rec.interviewees);
       setReviewerFlags(rec.reviewerFlags ?? []);
       setSurveyRatings(rec.surveyRatings ?? []);
+      setDraftBasis(rec.draftBasis ?? null);
       setLoading(false);
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -201,6 +206,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
       interviewees,
       surveyRatings,
       reviewerFlags,
+      draftBasis: draftBasis ?? undefined,
       updatedAt: new Date().toISOString(),
     };
   }
@@ -275,7 +281,11 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}) as { error?: string });
-        setGenerateError(body.error ?? `Request failed (${res.status})`);
+        setGenerateError(
+          res.status === 504
+            ? GENERATION_TIMEOUT_MESSAGE
+            : (body.error ?? `Request failed (${res.status})`),
+        );
         setGenerateStatus("error");
         return;
       }
@@ -287,6 +297,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
           reviewerFlags: ReviewerFlag[];
           surveyRatings: SurveyRating[];
         };
+        draftBasis?: DraftBasis;
         unreadableDocuments: string[];
       };
       const {
@@ -301,6 +312,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
       setFindingsMatrix(aiFindingsMatrix ?? []);
       setReviewerFlags(aiFlags ?? []);
       setSurveyRatings(aiRatings ?? []);
+      setDraftBasis(body.draftBasis ?? null);
       if (body.unreadableDocuments?.length > 0) {
         setGenerateWarning(
           `The AI couldn't read: ${body.unreadableDocuments.join(", ")}. Review these documents manually.`,
@@ -308,7 +320,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
       }
       setGenerateStatus("idle");
     } catch {
-      setGenerateError("Could not reach the AI drafting service.");
+      setGenerateError(GENERATION_TIMEOUT_MESSAGE);
       setGenerateStatus("error");
     }
   }
@@ -650,6 +662,13 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
                   <div className="mt-1">
                     <SurveyResponseSummary invites={invites} />
                   </div>
+                )}
+                {generateStatus !== "generating" && (
+                  <DraftFreshnessNotice
+                    basis={draftBasis}
+                    invites={invites}
+                    documents={documents}
+                  />
                 )}
               </div>
               <button

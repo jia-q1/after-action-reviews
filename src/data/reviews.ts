@@ -399,6 +399,15 @@ export type Review = {
   surveyRatings?: SurveyRating[];
 };
 
+// What the latest AI draft was generated from, so the drafting pages can
+// say when survey responses or documents have arrived since. Without it, a
+// page showed "3 of 3 received" above a draft built from 2 (Test 19).
+export type DraftBasis = {
+  generatedAt: string;
+  respondedInviteIds: string[];
+  documentIds: string[];
+};
+
 function year(value: string) {
   return Number(value.split("-")[0]);
 }

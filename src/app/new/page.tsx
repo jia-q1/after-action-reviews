@@ -11,6 +11,7 @@ import {
   type Interviewee,
   type ResponseArea,
   type ReviewerFlag,
+  type DraftBasis,
   type ReviewStatus,
   type SurveyRating,
   type TimelineEntry,
@@ -41,6 +42,8 @@ import {
   Field,
   GenerateConfirmBanner,
   GeneratingBanner,
+  DraftFreshnessNotice,
+  GENERATION_TIMEOUT_MESSAGE,
   IntervieweeField,
   MatrixField,
   MAX_FILE_BYTES,
@@ -285,6 +288,7 @@ function NewReviewWorkspace() {
   const [invites, setInvites] = useState<SurveyInvite[]>([]);
   const [inviteForm, setInviteForm] = useState(EMPTY_INVITE_FORM);
   const [unitIsOther, setUnitIsOther] = useState(false);
+  const [draftBasis, setDraftBasis] = useState<DraftBasis | null>(null);
   const [addingInvite, setAddingInvite] = useState(false);
   const [inviteError, setInviteError] = useState<string | null>(null);
   // Invites whose link was copied this session, so they can be marked as
@@ -383,6 +387,7 @@ function NewReviewWorkspace() {
         setInterviewees(record.interviewees);
         setReviewerFlags(record.reviewerFlags ?? []);
         setSurveyRatings(record.surveyRatings ?? []);
+        setDraftBasis(record.draftBasis ?? null);
 
         if (record.stage === "Awaiting Survey Responses") setStep(2);
         else if (record.executiveSummary) setStep(4);
@@ -720,6 +725,7 @@ function NewReviewWorkspace() {
       interviewees,
       surveyRatings,
       reviewerFlags,
+      draftBasis: draftBasis ?? undefined,
       documents,
       notes,
       prompt,
@@ -947,13 +953,18 @@ function NewReviewWorkspace() {
         // AI drafting isn't configured -- fall back to the offline mock
         // rather than blocking the wizard on a missing API key.
         setDraft(buildMockDraft());
+        setDraftBasis(null);
         setStatus("ready");
         return;
       }
 
       if (!res.ok) {
         const body = await res.json().catch(() => ({}) as { error?: string });
-        setGenerateError(body.error ?? `Request failed (${res.status})`);
+        setGenerateError(
+          res.status === 504
+            ? GENERATION_TIMEOUT_MESSAGE
+            : (body.error ?? `Request failed (${res.status})`),
+        );
         setStatus("error");
         return;
       }
@@ -965,6 +976,7 @@ function NewReviewWorkspace() {
           reviewerFlags: ReviewerFlag[];
           surveyRatings: SurveyRating[];
         };
+        draftBasis?: DraftBasis;
         unreadableDocuments: string[];
       };
       const {
@@ -979,6 +991,7 @@ function NewReviewWorkspace() {
       setFindingsMatrix(aiFindingsMatrix ?? []);
       setReviewerFlags(aiFlags ?? []);
       setSurveyRatings(aiRatings ?? []);
+      setDraftBasis(body.draftBasis ?? null);
       if (body.unreadableDocuments?.length > 0) {
         setGenerateWarning(
           `The AI couldn't read: ${body.unreadableDocuments.join(", ")}. Review these documents manually.`,
@@ -986,7 +999,7 @@ function NewReviewWorkspace() {
       }
       setStatus("ready");
     } catch {
-      setGenerateError("Could not reach the AI drafting service.");
+      setGenerateError(GENERATION_TIMEOUT_MESSAGE);
       setStatus("error");
     }
   }
@@ -1774,6 +1787,13 @@ function NewReviewWorkspace() {
             {invites.length > 0 && (
               <SurveyResponseSummary invites={invites} />
             )}
+            {status === "ready" && (
+              <DraftFreshnessNotice
+                basis={draftBasis}
+                invites={invites}
+                documents={documents}
+              />
+            )}
 
             {pendingGenerateWarnings ? (
               <GenerateConfirmBanner
@@ -2009,6 +2029,13 @@ function NewReviewWorkspace() {
                   <div className="mt-1">
                     <SurveyResponseSummary invites={invites} />
                   </div>
+                )}
+                {status === "ready" && (
+                  <DraftFreshnessNotice
+                    basis={draftBasis}
+                    invites={invites}
+                    documents={documents}
+                  />
                 )}
               </div>
               <StatusPill status={status} />

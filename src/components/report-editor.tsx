@@ -10,6 +10,7 @@ import {
   priorityLevels,
   recommendationOwners,
   responseAreas,
+  type DraftBasis,
   type FindingRow,
   type Interviewee,
   type PriorityLevel,
@@ -950,6 +951,69 @@ export function SurveyResponseSummary({ invites }: { invites: SurveyInvite[] }) 
         {responded} of {invites.length}
       </span>{" "}
       received
+    </p>
+  );
+}
+
+// Shown when the generate request fails without an answer from the server
+// (a timeout or dropped connection). The server saves the draft itself when
+// generation finishes, so it may well be there after a reload.
+export const GENERATION_TIMEOUT_MESSAGE =
+  "The AI drafting request didn't finish. If the draft was still being written, it's saved when it's done: wait a minute, then reload the page to check before generating again.";
+
+// Says when the draft no longer reflects the inputs: responses that arrived,
+// or documents added or removed, since it was generated. Shown next to
+// "Survey responses: X of N received", which on its own suggested the draft
+// included everyone (Test 19). Drafts made before draftBasis existed show
+// nothing -- there's no record of what they used.
+export function DraftFreshnessNotice({
+  basis,
+  invites,
+  documents,
+}: {
+  basis: DraftBasis | null | undefined;
+  invites: SurveyInvite[];
+  documents: DocumentSource[];
+}) {
+  if (!basis) return null;
+  const usedInvites = new Set(basis.respondedInviteIds);
+  const usedDocuments = new Set(basis.documentIds);
+  const currentDocuments = new Set(documents.map((d) => d.id));
+
+  const newResponses = invites.filter(
+    (i) => i.status === "Responded" && i.answers && !usedInvites.has(i.id),
+  );
+  const newDocuments = documents.filter((d) => !usedDocuments.has(d.id));
+  const removedDocuments = basis.documentIds.filter((id) => !currentDocuments.has(id)).length;
+  if (newResponses.length + newDocuments.length + removedDocuments === 0) return null;
+
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+  const parts = [
+    newResponses.length > 0 &&
+      `${plural(newResponses.length, "new survey response")} (${newResponses
+        .map((i) => i.role || i.name)
+        .join(", ")})`,
+    newDocuments.length > 0 &&
+      `${plural(newDocuments.length, "new document")} (${newDocuments.map((d) => d.name).join(", ")})`,
+    removedDocuments > 0 && `${plural(removedDocuments, "document")} removed`,
+  ].filter(Boolean);
+  const generated = new Date(basis.generatedAt).toLocaleString("en-GB", {
+    day: "numeric",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+
+  return (
+    <p
+      role="status"
+      className="mt-2 rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-900 ring-1 ring-amber-200"
+    >
+      <span className="font-semibold">This draft is out of date.</span> Since it was generated
+      ({generated}): {parts.join("; ")}. Regenerate to include{" "}
+      {newResponses.length + newDocuments.length > 0 ? "them" : "the change"}, or review{" "}
+      {newResponses.length + newDocuments.length > 0 ? "them" : "it"} yourself before the
+      final draft.
     </p>
   );
 }
