@@ -18,6 +18,7 @@ import {
   type TimelineEntry,
 } from "@/data/reviews";
 import { formatPeriod } from "@/lib/format";
+import { useInviteRefresh } from "@/lib/use-invite-refresh";
 import {
   getRecord,
   listInvites,
@@ -106,6 +107,7 @@ export default function ReviewEditWorkspace({ slug }: { slug: string }) {
   useEffect(() => {
     listInvites(slug).then(setInvites);
   }, [slug]);
+  useInviteRefresh(slug, setInvites);
 
   // One-time hydration from the database on mount.
   useEffect(() => {

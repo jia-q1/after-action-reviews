@@ -16,6 +16,7 @@ import {
   type TimelineEntry,
 } from "@/data/reviews";
 import { formatPeriod } from "@/lib/format";
+import { useInviteRefresh } from "@/lib/use-invite-refresh";
 import {
   createInvite,
   deleteInvite,
@@ -284,6 +285,11 @@ function NewReviewWorkspace() {
   const [invites, setInvites] = useState<SurveyInvite[]>([]);
   const [inviteForm, setInviteForm] = useState(EMPTY_INVITE_FORM);
   const [unitIsOther, setUnitIsOther] = useState(false);
+  const [addingInvite, setAddingInvite] = useState(false);
+  const [inviteError, setInviteError] = useState<string | null>(null);
+  // Invites whose link was copied this session, so they can be marked as
+  // sent once the person has actually shared it.
+  const [copiedInviteIds, setCopiedInviteIds] = useState<Set<string>>(new Set());
 
   const [documents, setDocuments] = useState<DocumentSource[]>([]);
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([]);
@@ -428,6 +434,8 @@ function NewReviewWorkspace() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [slug]);
 
+  useInviteRefresh(slug, setInvites);
+
   // Auto-save the record when changes are made. The timer is kept in a ref
   // (not just this effect's closure) so an explicit save/submit/complete
   // action can cancel it directly -- the cleanup function alone isn't
@@ -558,23 +566,45 @@ function NewReviewWorkspace() {
   }
 
   async function addInvite() {
-    if (!inviteForm.name.trim() || !inviteForm.email.trim() || !slug) return;
-    const created = await createInvite({ reviewSlug: slug, ...inviteForm });
-    if (created) {
-      setInvites((prev) => [...prev, created]);
-      
-      // Auto-advance to "Awaiting Survey Responses" if still in Drafting stage
-      if (overview.stage === "Drafting") {
-        const updatedOverview: OverviewState = {
-          ...overview,
-          stage: "Awaiting Survey Responses",
-        };
-        setOverview(updatedOverview);
-        await saveRecord(buildRecord({ overview: updatedOverview }));
-      }
+    if (addingInvite || !inviteForm.name.trim() || !inviteForm.email.trim() || !slug) return;
+    setInviteError(null);
+    const form = inviteForm;
+    const email = form.email.trim().toLowerCase();
+    if (
+      invites.some((i) => i.email.trim().toLowerCase() === email) &&
+      !window.confirm(`${form.email.trim()} is already on the invite list. Add them again?`)
+    ) {
+      return;
     }
+
+    // Clear the form straight away (keeping the selected survey) rather than
+    // after the server responds: typing the next person during that wait
+    // used to merge into the old entry when the form was reset under it.
+    // The guard above stops a double-click adding the same person twice.
+    setAddingInvite(true);
     setInviteForm((f) => ({ ...EMPTY_INVITE_FORM, templateId: f.templateId }));
+    const wasOther = unitIsOther;
     setUnitIsOther(false);
+    const created = await createInvite({ reviewSlug: slug, ...form }).catch(() => undefined);
+    setAddingInvite(false);
+    if (!created) {
+      // Used to fail silently, losing what was typed. Put it back.
+      setInviteForm(form);
+      setUnitIsOther(wasOther);
+      setInviteError(`Couldn't add ${form.name.trim()} to the invite list. Please try again.`);
+      return;
+    }
+    setInvites((prev) => [...prev, created]);
+
+    // Auto-advance to "Awaiting Survey Responses" if still in Drafting stage
+    if (overview.stage === "Drafting") {
+      const updatedOverview: OverviewState = {
+        ...overview,
+        stage: "Awaiting Survey Responses",
+      };
+      setOverview(updatedOverview);
+      await saveRecord(buildRecord({ overview: updatedOverview }));
+    }
   }
 
   async function removeInvite(id: string) {
@@ -593,9 +623,15 @@ function NewReviewWorkspace() {
       setCopiedInviteId(id);
       window.setTimeout(() => setCopiedInviteId((v) => (v === id ? null : v)), 2000);
     } catch {
-      // Clipboard access can fail (older browsers, permissions); marking
-      // the invite as sent is the important part, so continue regardless.
+      // Clipboard access can fail (older browsers, permissions).
+      window.prompt("Copy this survey link:", link);
     }
+    // Copying isn't sending -- it used to mark the invite "Link sent" right
+    // away. Offer "Mark as sent" instead, for once it's actually shared.
+    setCopiedInviteIds((prev) => new Set(prev).add(id));
+  }
+
+  async function handleMarkSent(id: string) {
     const updated = await markInviteSent(id);
     if (updated) {
       setInvites((prev) => prev.map((i) => (i.id === id ? updated : i)));
@@ -616,18 +652,22 @@ function NewReviewWorkspace() {
     }
   }
 
+  // Invitees not yet in People consulted. The button that adds them used to
+  // stay visible (with the full invite count) after they'd all been added.
+  const invitesNotInPeopleConsulted = useMemo(() => {
+    const existingNames = new Set(interviewees.map((p) => p.name.trim().toLowerCase()));
+    return invites.filter((invite) => !existingNames.has(invite.name.trim().toLowerCase()));
+  }, [invites, interviewees]);
+
   function addInvitesToPeopleConsulted() {
-    setInterviewees((prev) => {
-      const existingNames = new Set(prev.map((p) => p.name.toLowerCase()));
-      const additions = invites
-        .filter((invite) => !existingNames.has(invite.name.toLowerCase()))
-        .map((invite) => ({
-          name: invite.name,
-          title: invite.role,
-          agency: invite.undpOffice || invite.unit,
-        }));
-      return [...prev, ...additions];
-    });
+    setInterviewees((prev) => [
+      ...prev,
+      ...invitesNotInPeopleConsulted.map((invite) => ({
+        name: invite.name,
+        title: invite.role,
+        agency: invite.undpOffice || invite.unit,
+      })),
+    ]);
   }
 
   function buildRecord(opts?: {
@@ -1483,10 +1523,17 @@ function NewReviewWorkspace() {
               <button
                 type="button"
                 onClick={addInvite}
-                className="mt-3 w-full rounded-lg border border-dashed border-un-border px-3 py-2 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
+                disabled={addingInvite}
+                className="mt-3 w-full rounded-lg border border-dashed border-un-border px-3 py-2 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50 disabled:cursor-not-allowed disabled:opacity-60"
               >
-                + Add to invite list
+                {addingInvite ? "Adding…" : "+ Add to invite list"}
               </button>
+
+              {inviteError && (
+                <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 ring-1 ring-red-200">
+                  {inviteError}
+                </p>
+              )}
 
               {sendInviteError && (
                 <p className="mt-3 rounded-lg bg-red-50 px-3 py-2 text-xs text-red-700 ring-1 ring-red-200">
@@ -1558,6 +1605,15 @@ function NewReviewWorkspace() {
                               >
                                 {copiedInviteId === invite.id ? "Link copied!" : "Copy link"}
                               </button>
+                              {invite.status === "Draft" && copiedInviteIds.has(invite.id) && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleMarkSent(invite.id)}
+                                  className="text-xs font-semibold text-un-blue-700 underline decoration-dotted hover:text-un-blue-600"
+                                >
+                                  Mark as sent
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={() => removeInvite(invite.id)}
@@ -2205,14 +2261,14 @@ function NewReviewWorkspace() {
                         {interviewees.length} added
                       </span>
                     </div>
-                    {invites.length > 0 && (
+                    {invitesNotInPeopleConsulted.length > 0 && (
                       <button
                         type="button"
                         onClick={addInvitesToPeopleConsulted}
                         className="mt-3 w-full rounded-lg border border-dashed border-un-border px-3 py-1.5 text-sm font-semibold text-un-blue-700 hover:bg-un-blue-50"
                       >
-                        + Add {invites.length} survey invite
-                        {invites.length === 1 ? "" : "s"} from Step 2
+                        + Add {invitesNotInPeopleConsulted.length} survey invite
+                        {invitesNotInPeopleConsulted.length === 1 ? "" : "s"} from Step 2
                       </button>
                     )}
                     <div className="mt-3">
