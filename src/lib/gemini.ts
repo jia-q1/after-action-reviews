@@ -15,7 +15,7 @@ import {
   extractDocumentText,
   extractPdfText,
 } from "@/lib/document-extraction";
-import { extractSurveyRatings, runDraftChecks } from "@/lib/draft-checks";
+import { extractSurveyRatings, isContentlessAnswer, runDraftChecks } from "@/lib/draft-checks";
 
 export function isGeminiConfigured(): boolean {
   return Boolean(process.env.GEMINI_API_KEY);
@@ -214,11 +214,19 @@ SOURCES
 - The labels are for the "sources" fields only. Never put a label, a file name or a personal name in the report text. Refer to documents by a short description (e.g. "the Crisis Board minutes of 2 July", "the SURGE deployment tracker") and to respondents by role or unit (e.g. "the Operations Manager", "a Crisis Bureau respondent"), so no one is identified by name.
 - Every timeline entry and every findings matrix row must list the sources that support it.
 - Only state a figure, amount, percentage, count or date if it appears in a source. Do not round, convert, combine or estimate figures into new ones. If you're unsure of a figure, leave it out and add a reviewer flag.
+- Do not add figures up yourself, including totals across donors, projects or months. List the figures as the sources give them; use a total only if a source states it.
+- A survey respondent belongs in a findings matrix row's "sources" only if their own answers address that finding. Don't cite respondents to make a finding look better supported: the report shows "X of N respondents" from these lists. A finding about a gap (e.g. "no respondent mentioned gender") cites no respondents.
+- When you quote or paraphrase an answer or document that wasn't in English, say so, e.g. "(translated from French)".
 
 DISAGREEMENTS AND WEAK EVIDENCE
 - When sources disagree about the same fact or explanation (a date, an amount, who caused a delay), do not merge them into one neutral account and do not pick a side. Present each view in the text, attributed to its source (e.g. "The Crisis Bureau respondent attributed the delay to ...; the SURGE adviser attributed it to ..."), and add a "conflict" reviewer flag.
 - When two sources give different dates for the same event, write ONE timeline entry, mention both dates in the event text, and add a "conflict" reviewer flag. Do not list it as two separate events.
-- A claim that comes from a single respondent must be attributed in the text ("One respondent reported ...", "The Operations Manager noted ..."), not stated as established fact.
+- A claim that comes from a single respondent must be attributed in the text ("One respondent reported ...", "The Operations Manager noted ..."), not stated as established fact. This applies everywhere, including the executive summary and the findings matrix, and above all to sensitive claims (illness, injury, resignations, misconduct, who was at fault). Add a "single-source" reviewer flag for each such claim in the section text, naming the respondent's role.
+- Only link two facts with cause-and-effect wording ("led to", "leading to", "resulted in", "caused", "due to", "because of", "leaving", "as a result") when a source states that link. If the sources give two facts side by side, report them side by side.
+  - Example: a respondent says staff worked 18-hour days, and separately that two staff caught cholera on field visits. Not: "18-hour days led to staff contracting cholera." Instead: "Staff worked 18-hour days. Two staff caught cholera during field visits."
+- Treat answers with no content ("ok", "fine", "n/a", "see above", "same as before") as no evidence. Don't turn them into statements such as "operations maintained business continuity".
+- In action-point tables, a "Due", "Deadline" or "Target" date is when something was supposed to happen, not when it happened. Only report an action as done, or give a completion date, if a source says it was completed.
+- A date written like 05/06 can mean 5 June or 6 May. Where it matters, give both readings, and check whether either matches a date in another source before treating it as a disagreement.
 
 NEUTRAL LANGUAGE
 - Describe what happened; do not label or judge it. Do not add intensifiers or characterizations ("severe", "severely", "violating", "failure", "burnout", "critical") unless a source uses that wording.
@@ -234,6 +242,9 @@ COVERAGE
 - Gender is its own response area: put gender findings in their own findings matrix row(s) with responseArea "Gender", including any gender-based violence or protection risks respondents raised and whether they were followed up.
 - Where a respondent chose a rating on a scale (e.g. "Limited Integrated", "Somewhat Ineffective"), report that rating in the relevant section, attributed.
 - Every findings matrix row needs an "owner": whoever is best placed to act on the recommendation. Where respondents named who should act, use that.
+- If a report section has no evidence in the sources, write exactly "Not covered – reviewer to complete." as its text and add a "thin-evidence" flag. Don't fill it with general statements.
+- Besides operational findings, look in the sources for evidence on these institutional lessons, which real AARs often lead with: whether roles and responsibilities were clear at the onset; crisis preparedness (preparedness plans, risk monitoring and early warning, scenario planning, political economy analysis); when analysis and assessments started to inform decisions; the Regional Bureau or Regional Hub's role as a first responder; and peer learning across offices and regions. Write a finding and recommendation for each one the sources support. Don't create them where the sources are silent.
+- End the executive summary with an overall assessment of the response (for example, whether it was timely and effective overall, and its main strengths and weaknesses), based on the weight of the evidence and saying what it rests on. If the evidence is mixed or thin, say so.
 
 REVIEWER FLAGS
 - Use "reviewerFlags" for anything the human reviewer must check before the final draft:
@@ -245,7 +256,8 @@ REVIEWER FLAGS
 - Flags are notes to the reviewer only. Never mention them in the report text.
 
 FINAL CHECK
-- Before answering, re-read every number and date in your draft and confirm it appears in a source. Remove any that don't, or keep them and add an "unsupported" flag.`;
+- Before answering, re-read every number and date in your draft and confirm it appears in a source. Remove any that don't, or keep them and add an "unsupported" flag.
+- Re-read every "led to", "caused", "due to" and "leaving" and confirm a source states that link. Re-read every claim in the executive summary and confirm it's either corroborated or attributed.`;
 
 // Spotting disagreements between sources is the one thing the drafting
 // request did unreliably (in testing it caught a planted date conflict in
@@ -279,6 +291,9 @@ For each disagreement, say what each source says, quoting or closely paraphrasin
 Do NOT report:
 - Sources that simply give different levels of detail, or where one source mentions something another doesn't.
 - Differences in wording that mean the same thing.
+- A due or target date in one source and a completion date in another: those are different things, not a disagreement (but do say if the action was done late).
+
+A date written like 05/06 can mean 5 June or 6 May. If one reading matches the other source, it's probably not a disagreement; if you still report it, say that the date can be read both ways and may be a typo or a format difference.
 
 If there are no disagreements, return an empty list.`;
 
@@ -465,7 +480,7 @@ export async function generateDraft(input: {
     const template = input.templates.find((t) => t.id === invite.templateId);
     const questions = (template?.questions ?? [])
       .map((q) => ({ text: q.text, answer: invite.answers?.[q.id]?.trim() ?? "" }))
-      .filter((q) => q.answer);
+      .filter((q) => q.answer && !isContentlessAnswer(q.answer));
     const role = invite.role || template?.name || invite.unit || "role not given";
     return { invite, role, questions };
   });
@@ -567,6 +582,12 @@ export async function generateDraft(input: {
         ...surveyResponses.flatMap((r) => r.questions.map((q) => `${q.text}\n${q.answer}`)),
       ].join("\n\n"),
       unsearchedSources: unsearchablePdfs,
+      surveyAnswers: Object.fromEntries(
+        surveyResponses.map(({ invite, role, questions }) => [
+          surveyLabel(invite, role),
+          questions.map((q) => q.answer).join("\n"),
+        ]),
+      ),
     });
     // Neither the dedicated conflict check nor the draft's own conflict
     // flags catch everything (in testing each missed a planted conflict

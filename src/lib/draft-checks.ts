@@ -254,6 +254,24 @@ function excerpt(text: string, index: number, length: number): string {
   return sentence.length > 220 ? `${sentence.slice(0, 217)}...` : sentence;
 }
 
+// --- Survey answers ------------------------------------------------------
+
+// Answers that say nothing ("ok", "fine", "n/a", "see above"). They're left
+// out of what the AI reads: given "ok" to "How did operations go?", it wrote
+// "operations maintained business continuity" (Test 9). Deliberately narrow:
+// "no", "none" and "good" can be real answers to the right question.
+const CONTENTLESS_ANSWER =
+  /^(?:ok(?:ay)?|fine|n\/?a|n\.a\.?|-+|\.+|\?+|see above|(?:same )?as above|same(?: as (?:before|above))?|no comment|nothing to add|idem|ras|rien à signaler|sin comentarios?)[.!]?$/i;
+
+export function isContentlessAnswer(answer: string): boolean {
+  return CONTENTLESS_ANSWER.test(answer.trim().replace(/\s+/g, " "));
+}
+
+// What counts as a respondent talking about gender, in English, French or
+// Spanish.
+const GENDER_TERMS =
+  /gender|women|woman|girls?\b|female|\bgbv\b|sexual|\bsea\b|psea|protection|sex[- ]disaggregat|\bgen[0-3]\b|femmes?\b|filles?\b|genre|mujer(?:es)?|niñas?|género|violencia sexual/i;
+
 // --- Entry point ---------------------------------------------------------
 
 export function runDraftChecks(input: {
@@ -264,6 +282,8 @@ export function runDraftChecks(input: {
   // Sources the AI read but this check can't (PDFs go to Gemini as files,
   // so their text never passes through our server).
   unsearchedSources: string[];
+  // Each survey respondent's answers, keyed by their source label.
+  surveyAnswers?: Record<string, string>;
 }): FlagInput[] {
   const flags: FlagInput[] = [];
   const texts = draftTexts(input);
@@ -382,6 +402,27 @@ export function runDraftChecks(input: {
         origin: "check",
       });
     }
+  }
+
+  // Gender rows citing respondents who never mentioned gender. The report
+  // turns citations into "X of N respondents", so these made gender findings
+  // look corroborated when they weren't ("3 of 3 respondents" when none
+  // raised it, in Tests 3, 5 and 12).
+  for (const row of input.findingsMatrix) {
+    if (row.responseArea !== "Gender") continue;
+    const silent = (row.sources ?? []).filter(
+      (label) =>
+        input.surveyAnswers?.[label] !== undefined &&
+        !GENDER_TERMS.test(input.surveyAnswers[label]),
+    );
+    if (silent.length === 0) continue;
+    flags.push({
+      type: "unsupported",
+      section: "Annex 7: Gender",
+      description: `This gender finding cites ${silent.length === 1 ? "a respondent who doesn't" : `${silent.length} respondents who don't`} mention gender, women or GBV anywhere in their answers, so its respondent count overstates the support: "${row.finding}" Remove them from the sources, or check what they said.`,
+      sources: silent,
+      origin: "check",
+    });
   }
 
   // Findings that rest on one source.

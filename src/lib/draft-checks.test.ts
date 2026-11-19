@@ -5,7 +5,7 @@
 // Run with: npm test
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { runDraftChecks, extractSurveyRatings } from "./draft-checks.ts";
+import { runDraftChecks, extractSurveyRatings, isContentlessAnswer } from "./draft-checks.ts";
 import type { ReportDraft } from "./aar-store.ts";
 import type { FindingRow, TimelineEntry } from "../data/reviews.ts";
 
@@ -184,6 +184,55 @@ describe("single-source findings", () => {
     const flags = check({}, "", { findingsMatrix: [row([]), row(["A"]), row(["A", "B"])] });
     assert.equal(flags.length, 2);
     assert.ok(flags.every((f) => f.type === "single-source"));
+  });
+});
+
+describe("gender findings citing respondents", () => {
+  const gender = (sources: string[]) =>
+    ({ responseArea: "Gender", finding: "Gender was not systematically integrated.", recommendation: "R", keyActions: "K", sources }) as unknown as FindingRow;
+  const run = (rows: FindingRow[], surveyAnswers: Record<string, string>) =>
+    runDraftChecks({
+      draft: EMPTY_DRAFT,
+      timeline: [],
+      findingsMatrix: rows,
+      sourceText: "",
+      unsearchedSources: [],
+      surveyAnswers,
+    }).filter((f) => f.section === "Annex 7: Gender" && f.type === "unsupported");
+
+  const answers = {
+    "Survey: A": "Procurement was slow. SURGE arrived late.",
+    "Survey: B": "Women-headed households were prioritised for cash.",
+    "Survey: C": "Les femmes n'ont pas été consultées.",
+  };
+
+  it("flags respondents who never mention gender", () => {
+    const flags = run([gender(["Survey: A", "Survey: B", "Document: x.pdf"])], answers);
+    assert.equal(flags.length, 1);
+    assert.deepEqual(flags[0].sources, ["Survey: A"]);
+  });
+
+  it("accepts gender terms in French", () => {
+    assert.deepEqual(run([gender(["Survey: B", "Survey: C"])], answers), []);
+  });
+
+  it("only checks Gender rows", () => {
+    const coordination = { ...gender(["Survey: A"]), responseArea: "Coordination" } as FindingRow;
+    assert.deepEqual(run([coordination], answers), []);
+  });
+});
+
+describe("isContentlessAnswer", () => {
+  it("catches answers that say nothing", () => {
+    for (const a of ["ok", "OK.", "fine", "n/a", "N/A", "na", "-", "see above", "same as before", "Same as above", "no comment", "RAS"]) {
+      assert.equal(isContentlessAnswer(a), true, a);
+    }
+  });
+
+  it("keeps short answers that can carry meaning", () => {
+    for (const a of ["no", "None", "Good", "yes", "late", "ok, but SURGE arrived late", "Fine until the second week"]) {
+      assert.equal(isContentlessAnswer(a), false, a);
+    }
   });
 });
 
